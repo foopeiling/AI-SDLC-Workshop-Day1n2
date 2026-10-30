@@ -14,7 +14,7 @@ export default defineConfig({
     ...devices['Desktop Chrome'],
   },
   webServer: {
-    command: 'npm run dev -- --hostname localhost',
+    command: 'npm run seed:holidays && npm run dev -- --hostname localhost',
     url: 'http://localhost:3000/',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

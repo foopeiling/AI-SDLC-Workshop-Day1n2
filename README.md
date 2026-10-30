@@ -4,6 +4,40 @@ This walkthrough will guide you from zero to running the Todo App with GitHub Co
 
 Reference : https://ai-sdlc-workshop-day1-production.up.railway.app/login
 
+## Task 10: Monthly calendar
+
+Use **Calendar** in the list header to open `/calendar`. The calendar always shows
+all of your due-dated todos, independently of list filters. It uses Singapore dates,
+six fixed Sun–Sat rows, priority-coloured pills, and a read-only day-details dialog.
+Only three todos appear in each day cell; click the day to see the rest.
+Previous/Next/Today replace the `?month=YYYY-MM` URL state, so refresh and bookmarks
+preserve the displayed month. Invalid month values fall back to the current
+Singapore month. Return using **List** or the Todo logo.
+
+Seed the shared public-holiday table before running the app:
+
+```powershell
+npm.cmd run seed:holidays
+```
+
+The idempotent seed includes the [MOM Singapore public holidays for 2026](https://www.mom.gov.sg/employment-practices/public-holidays),
+including the observed Mondays after Sunday holidays. It uses `DATABASE_PATH`
+when configured, otherwise the project-root database. Years not seeded remain
+browsable but do not imply that there are no public holidays; add verified dates
+to the seed for additional years. No live holiday service is called by the app.
+
+Authenticated `GET /api/holidays` returns `{ holidays }`. Optional `year` and
+`month` must be supplied together and return exactly the visible 42-day range,
+including adjacent-month cells. Authentication protection uses the existing
+`proxy.ts`, not legacy middleware. Failed calendar loads show an error and Retry.
+
+```powershell
+npm.cmd exec -- vitest run tests/unit/calendar.test.ts tests/unit/holiday-routes.test.ts
+npm.cmd exec -- playwright test tests/e2e/12-calendar.spec.ts
+```
+
+The Playwright-managed server seeds its isolated test database before startup.
+
 ## Task 05: Subtasks and progress
 
 Each todo has an expandable **Subtasks** checklist. Add a trimmed, non-empty title

@@ -2,6 +2,7 @@
 
 import { Bell, CalendarClock, Check, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { AccountActions } from '@/components/account-actions';
 import type { Priority, ReminderMinutes, Subtask, Todo, UpdateTodoInput } from '@/lib/db';
 import { REMINDER_LABELS } from '@/lib/reminders';
@@ -558,6 +559,7 @@ export default function HomePage() {
           <span>Todo</span>
         </div>
         <div className="header-actions">
+          <Link className="calendar-link" href="/calendar">Calendar</Link>
           <NotificationToggle />
           <AccountActions />
         </div>
