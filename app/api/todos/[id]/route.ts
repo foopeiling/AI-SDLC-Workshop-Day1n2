@@ -1,13 +1,14 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
-import { todoDB } from '@/lib/db';
+import { PRIORITY_VALUES, todoDB } from '@/lib/db';
 import { readJsonBody } from '@/lib/auth-validation';
 import { getSingaporeNow } from '@/lib/timezone';
 import { normalizeDueDate } from '@/lib/todo-utils';
 import { authorizeTodoRequest } from '@/lib/todo-api-guard';
 
 type RouteContext = { params: Promise<{ id: string }> };
+const prioritySchema = z.enum(PRIORITY_VALUES);
 
 const reminderMinutesSchema = z.union([
   z.literal(15), z.literal(30), z.literal(60), z.literal(120),
@@ -17,7 +18,7 @@ const reminderMinutesSchema = z.union([
 const updateTodoSchema = z.object({
   title: z.string().trim().min(1, 'Title cannot be empty').optional(),
   due_date: z.string().nullable().optional(),
-  priority: z.enum(['high', 'medium', 'low']).optional(),
+  priority: prioritySchema.optional(),
   completed: z.boolean().optional(),
   is_recurring: z.boolean().optional(),
   recurrence_pattern: z.enum(['daily', 'weekly', 'monthly', 'yearly']).nullable().optional(),

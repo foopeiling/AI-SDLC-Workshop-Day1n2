@@ -274,6 +274,7 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<Priority>('medium');
+  const [priorityFilter, setPriorityFilter] = useState<Priority | 'all'>('all');
   const [dueDate, setDueDate] = useState('');
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
   const [reminderMinutes, setReminderMinutes] = useState<ReminderMinutes | null>(null);
@@ -429,9 +430,12 @@ export default function HomePage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [manageTagsOpen]);
 
-  const visibleTodos = activeTagFilter === null
+  const priorityFilteredTodos = priorityFilter === 'all'
     ? todos
-    : todos.filter((todo) => todo.tags?.some((tag) => tag.id === activeTagFilter));
+    : todos.filter((todo) => todo.priority === priorityFilter);
+  const visibleTodos = activeTagFilter === null
+    ? priorityFilteredTodos
+    : priorityFilteredTodos.filter((todo) => todo.tags?.some((tag) => tag.id === activeTagFilter));
   const sections = sectionTodos(visibleTodos, now);
 
   function openManageTags() {
@@ -527,7 +531,6 @@ export default function HomePage() {
       setError(caughtError instanceof Error ? caughtError.message : 'Could not delete tag.');
     }
   }
-
   async function addTodo(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user || !title.trim()) return;
@@ -854,11 +857,29 @@ export default function HomePage() {
           </div>
         </form>
 
+        <div className="todo-filter-bar">
+          <label>
+            <span className="field-label">Filter by priority</span>
+            <select
+              className="text-input"
+              value={priorityFilter}
+              onChange={(event) => setPriorityFilter(event.target.value as Priority | 'all')}
+            >
+              <option value="all">All Priorities</option>
+              <option value="high">High Priority</option>
+              <option value="medium">Medium Priority</option>
+              <option value="low">Low Priority</option>
+            </select>
+          </label>
+        </div>
+
         {error && !manageTagsOpen && <p className="auth-error todo-error" role="alert">{error}</p>}
         {isLoading ? (
           <p className="empty-state" role="status">Loading todos…</p>
+        ) : todos.length === 0 ? (
+          <p className="empty-state">No todos yet.</p>
         ) : visibleTodos.length === 0 ? (
-          <p className="empty-state">{todos.length === 0 ? 'No todos yet.' : 'No todos with this tag.'}</p>
+          <p className="empty-state" role="status">No todos match the selected filters.</p>
         ) : (
           <div className="todo-sections" aria-live="polite">
             {renderSection('Overdue', sections.overdue, 'overdue-section')}

@@ -1,9 +1,12 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import type { Priority } from './priority';
 import type { ReminderMinutes } from './reminders';
 
-export type Priority = 'high' | 'medium' | 'low';
+export { PRIORITY_ORDER, PRIORITY_VALUES } from './priority';
+export type { Priority } from './priority';
+
 export type RecurrencePattern = 'daily' | 'weekly' | 'monthly' | 'yearly';
 export type ChallengeCeremony = 'registration' | 'login' | 'passkey-registration';
 export type { ReminderMinutes } from './reminders';
