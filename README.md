@@ -4,6 +4,35 @@ This walkthrough will guide you from zero to running the Todo App with GitHub Co
 
 Reference : https://ai-sdlc-workshop-day1-production.up.railway.app/login
 
+## Task 05: Subtasks and progress
+
+Each todo has an expandable **Subtasks** checklist. Add a trimmed, non-empty title
+with Enter or **Add**, toggle a checkbox, or remove a child with its delete button.
+Progress remains visible when collapsed, is blue below 100% and green at 100%,
+and is hidden when there are no subtasks. Parent and child completion are independent.
+Changes appear optimistically; failed requests restore the checklist and show an error.
+Mutations on the same todo are temporarily disabled while a request is pending to
+prevent stale responses or parent deletion from racing a subtask change.
+
+The authenticated API supports `POST /api/todos/[id]/subtasks` with `{ title }`,
+and `PUT /api/subtasks/[id]` with `{ title?, completed? }` or
+`DELETE /api/subtasks/[id]`. Mutations inherit ownership from the parent todo;
+missing or other-user records return 404. Subtasks are included in todo GET responses.
+SQLite foreign keys are enabled on connection creation, so deleting a parent
+cascades to its subtasks. New rows append after the maximum position; deletion
+does not renumber siblings. Database updates/deletes use the owner-scoped
+`subtaskDB.updateForUser` / `deleteForUser` methods, matching the todo repository.
+
+Task 08 can search the hydrated `todo.subtasks` titles; no separate search UI is
+introduced by task 05.
+
+Focused validation:
+
+```powershell
+npm.cmd exec -- vitest run tests/unit/subtask-utils.test.ts tests/unit/subtask-database.test.ts tests/unit/subtask-routes.test.ts
+npm.cmd exec -- playwright test tests/e2e/07-subtasks.spec.ts
+```
+
 ---
 
 ## Table of Contents

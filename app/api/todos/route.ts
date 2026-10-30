@@ -46,6 +46,9 @@ export async function POST(request: NextRequest) {
 
   const dueDate = normalizeDueDate(parsed.data.due_date, getSingaporeNow());
   if (!dueDate.success) return NextResponse.json({ error: dueDate.error }, { status: 400 });
+  if (parsed.data.reminder_minutes != null && dueDate.value === null) {
+    return NextResponse.json({ error: 'A due date is required for a reminder.' }, { status: 400 });
+  }
 
   try {
     const todo = todoDB.create({
