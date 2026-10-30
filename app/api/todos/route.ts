@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getSession } from '@/lib/auth';
 import { PRIORITY_VALUES, todoDB } from '@/lib/db';
 import { readJsonBody } from '@/lib/auth-validation';
+import { RECURRENCE_PATTERNS, validateRecurrence } from '@/lib/recurrence';
 import { getSingaporeNow } from '@/lib/timezone';
 import { normalizeDueDate } from '@/lib/todo-utils';
 import { authorizeTodoRequest } from '@/lib/todo-api-guard';
@@ -18,7 +19,7 @@ const createTodoSchema = z.object({
   due_date: z.string().nullable().optional(),
   priority: prioritySchema.optional(),
   is_recurring: z.boolean().optional(),
-  recurrence_pattern: z.enum(['daily', 'weekly', 'monthly', 'yearly']).nullable().optional(),
+  recurrence_pattern: z.enum(RECURRENCE_PATTERNS, { error: 'Invalid recurrence pattern' }).nullable().optional(),
   reminder_minutes: reminderMinutesSchema.nullable().optional(),
   tag_ids: z.array(z.number().int().positive()).optional(),
 });
@@ -61,9 +62,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'A due date is required for a reminder.' }, { status: 400 });
   }
 
+  const isRecurring = parsed.data.is_recurring ?? false;
+  const recurrenceError = validateRecurrence({
+    isRecurring,
+    pattern: parsed.data.recurrence_pattern,
+    dueDate: dueDate.value,
+  });
+  if (recurrenceError) return NextResponse.json({ error: recurrenceError }, { status: 400 });
+
   try {
     const todo = todoDB.create({
       ...parsed.data,
+      is_recurring: isRecurring,
+      recurrence_pattern: isRecurring ? parsed.data.recurrence_pattern : null,
       user_id: session.userId,
       due_date: dueDate.value,
     });

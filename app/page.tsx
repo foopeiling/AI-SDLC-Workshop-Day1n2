@@ -3,7 +3,7 @@
 import { Bell, CalendarClock, Check, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { AccountActions } from '@/components/account-actions';
-import type { Priority, ReminderMinutes, Subtask, Todo, UpdateTodoInput } from '@/lib/db';
+import type { Priority, RecurrencePattern, ReminderMinutes, Subtask, Todo, UpdateTodoInput } from '@/lib/db';
 import { REMINDER_LABELS } from '@/lib/reminders';
 import { useNotifications } from '@/lib/hooks/useNotifications';
 import { calculateProgress } from '@/lib/subtask-utils';
@@ -15,6 +15,8 @@ interface FormValues {
   dueDate: string;
   priority: Priority;
   reminderMinutes: ReminderMinutes | null;
+  isRecurring: boolean;
+  recurrencePattern: RecurrencePattern;
 }
 
 interface ApiError {
@@ -154,6 +156,15 @@ function TodoRows({
             <span className={todo.completed ? 'todo-title is-complete' : 'todo-title'}>{todo.title}</span>
             <span className="todo-meta">
               <span className={`priority-label priority-${todo.priority}`}>{todo.priority}</span>
+              {todo.is_recurring && todo.recurrence_pattern && (
+                <span
+                  className="recurrence-badge"
+                  data-testid="recurrence-badge"
+                  aria-label={`Repeats ${todo.recurrence_pattern}`}
+                >
+                  <span aria-hidden="true">🔄</span> {todo.recurrence_pattern}
+                </span>
+              )}
               {todo.reminder_minutes !== null && (
                 <span className="reminder-badge" aria-label={`Reminder ${REMINDER_LABELS[todo.reminder_minutes]} before due time`}>
                   <Bell size={13} aria-hidden="true" /> {REMINDER_LABELS[todo.reminder_minutes]}
@@ -208,12 +219,16 @@ export default function HomePage() {
   const [priorityFilter, setPriorityFilter] = useState<Priority | 'all'>('all');
   const [dueDate, setDueDate] = useState('');
   const [reminderMinutes, setReminderMinutes] = useState<ReminderMinutes | null>(null);
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurrencePattern, setRecurrencePattern] = useState<RecurrencePattern>('weekly');
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
   const [editValues, setEditValues] = useState<FormValues>({
     title: '',
     dueDate: '',
     priority: 'medium',
     reminderMinutes: null,
+    isRecurring: false,
+    recurrencePattern: 'weekly',
   });
   const [now, setNow] = useState(() => getSingaporeNow());
   const [pendingTodoIds, setPendingTodoIds] = useState<Set<number>>(() => new Set());
@@ -335,8 +350,8 @@ export default function HomePage() {
       completed: false,
       due_date: normalizedDueDate.value,
       priority,
-      is_recurring: false,
-      recurrence_pattern: null,
+      is_recurring: isRecurring,
+      recurrence_pattern: isRecurring ? recurrencePattern : null,
       reminder_minutes: reminderMinutes,
       last_notification_sent: null,
       created_at: getSingaporeNow().toISOString(),
@@ -349,6 +364,8 @@ export default function HomePage() {
     setPriority('medium');
     setDueDate('');
     setReminderMinutes(null);
+    setIsRecurring(false);
+    setRecurrencePattern('weekly');
 
     try {
       const response = await fetch('/api/todos', {
@@ -359,6 +376,8 @@ export default function HomePage() {
           due_date: normalizedDueDate.value,
           priority,
           reminder_minutes: reminderMinutes,
+          is_recurring: isRecurring,
+          recurrence_pattern: isRecurring ? recurrencePattern : null,
         }),
       });
       if (!response.ok) throw new Error(await getApiError(response));
@@ -387,8 +406,13 @@ export default function HomePage() {
         body: JSON.stringify({ completed }),
       });
       if (!response.ok) throw new Error(await getApiError(response));
-      const savedTodo = (await response.json()) as Todo;
-      setTodos((currentTodos) => currentTodos.map((item) => item.id === todo.id ? savedTodo : item));
+      const { next_instance: nextInstance, ...savedTodo } = (await response.json()) as Todo & { next_instance?: Todo };
+      setTodos((currentTodos) => {
+        const updated = currentTodos.map((item) => item.id === todo.id ? savedTodo : item);
+        return nextInstance && !updated.some((item) => item.id === nextInstance.id)
+          ? [...updated, nextInstance]
+          : updated;
+      });
     } catch (caughtError) {
       setTodos((currentTodos) => currentTodos.map((item) => item.id === todo.id ? todo : item));
       setError(caughtError instanceof Error ? caughtError.message : 'Could not update todo.');
@@ -408,6 +432,8 @@ export default function HomePage() {
       dueDate: todo.due_date ? formatSingaporeInput(todo.due_date) : '',
       priority: todo.priority,
       reminderMinutes: todo.reminder_minutes,
+      isRecurring: todo.is_recurring,
+      recurrencePattern: todo.recurrence_pattern ?? 'weekly',
     });
   }
 
@@ -434,6 +460,8 @@ export default function HomePage() {
       title: editValues.title.trim(),
       priority: editValues.priority,
       reminder_minutes: editValues.reminderMinutes,
+      is_recurring: editValues.isRecurring,
+      recurrence_pattern: editValues.isRecurring ? editValues.recurrencePattern : null,
       ...(dueDateChanged ? { due_date: normalizedDueDate } : {}),
     };
     if (!beginTodoMutation(previousTodo.id)) return;
@@ -442,6 +470,8 @@ export default function HomePage() {
       ...update,
       due_date: dueDateChanged ? normalizedDueDate ?? null : previousTodo.due_date,
       reminder_minutes: editValues.reminderMinutes,
+      is_recurring: editValues.isRecurring,
+      recurrence_pattern: editValues.isRecurring ? editValues.recurrencePattern : null,
     };
     setTodos((currentTodos) => currentTodos.map((todo) => todo.id === previousTodo.id ? optimisticTodo : todo));
     setError(null);
@@ -594,7 +624,10 @@ export default function HomePage() {
               value={dueDate}
               onChange={(event) => {
                 setDueDate(event.target.value);
-                if (!event.target.value) setReminderMinutes(null);
+                if (!event.target.value) {
+                  setReminderMinutes(null);
+                  setIsRecurring(false);
+                }
               }}
             />
           </label>
@@ -603,6 +636,14 @@ export default function HomePage() {
             dueDate={dueDate}
             value={reminderMinutes}
             onChange={setReminderMinutes}
+          />
+          <RecurrenceFields
+            idPrefix="create"
+            isRecurring={isRecurring}
+            pattern={recurrencePattern}
+            hasDueDate={Boolean(dueDate)}
+            onToggle={setIsRecurring}
+            onPatternChange={setRecurrencePattern}
           />
           <button className="primary-action add-todo-action" type="submit" disabled={isLoading || isSubmitting || !title.trim()}>
             <Plus size={18} aria-hidden="true" /> Add todo
@@ -684,6 +725,7 @@ export default function HomePage() {
                     ...values,
                     dueDate: event.target.value,
                     reminderMinutes: event.target.value ? values.reminderMinutes : null,
+                    isRecurring: event.target.value ? values.isRecurring : false,
                   }))}
                 />
               </label>
@@ -692,6 +734,14 @@ export default function HomePage() {
                 dueDate={editValues.dueDate}
                 value={editValues.reminderMinutes}
                 onChange={(value) => setEditValues((values) => ({ ...values, reminderMinutes: value }))}
+              />
+              <RecurrenceFields
+                idPrefix="edit"
+                isRecurring={editValues.isRecurring}
+                pattern={editValues.recurrencePattern}
+                hasDueDate={Boolean(editValues.dueDate)}
+                onToggle={(checked) => setEditValues((values) => ({ ...values, isRecurring: checked }))}
+                onPatternChange={(pattern) => setEditValues((values) => ({ ...values, recurrencePattern: pattern }))}
               />
               <div className="todo-dialog-actions">
                 <button className="secondary-action" type="button" onClick={() => setEditingTodo(null)}>Cancel</button>
@@ -706,6 +756,55 @@ export default function HomePage() {
         </div>
       )}
     </main>
+  );
+}
+
+function RecurrenceFields({
+  idPrefix,
+  isRecurring,
+  pattern,
+  hasDueDate,
+  onToggle,
+  onPatternChange,
+}: {
+  idPrefix: string;
+  isRecurring: boolean;
+  pattern: RecurrencePattern;
+  hasDueDate: boolean;
+  onToggle: (checked: boolean) => void;
+  onPatternChange: (pattern: RecurrencePattern) => void;
+}) {
+  return (
+    <div className="recurrence-fields">
+      <label className="recurrence-toggle">
+        <input
+          type="checkbox"
+          id={`${idPrefix}-repeat`}
+          checked={isRecurring}
+          disabled={!hasDueDate}
+          aria-describedby={hasDueDate ? undefined : `${idPrefix}-repeat-hint`}
+          onChange={(event) => onToggle(event.target.checked)}
+        />
+        <span>Repeat</span>
+      </label>
+      {isRecurring && (
+        <select
+          className="text-input"
+          id={`${idPrefix}-recurrence-pattern`}
+          aria-label={idPrefix === 'edit' ? 'Edit repeat pattern' : 'Repeat pattern'}
+          value={pattern}
+          onChange={(event) => onPatternChange(event.target.value as RecurrencePattern)}
+        >
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+          <option value="monthly">Monthly</option>
+          <option value="yearly">Yearly</option>
+        </select>
+      )}
+      {!hasDueDate && (
+        <span className="recurrence-hint" id={`${idPrefix}-repeat-hint`}>Set a due date to enable repeat</span>
+      )}
+    </div>
   );
 }
 
