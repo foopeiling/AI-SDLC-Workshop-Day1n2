@@ -75,6 +75,17 @@ describe('todo API routes', () => {
     });
     expect(todoDB.findAllByUser(aliceId)).toHaveLength(1);
 
+    const reminderWithoutDueDate = new NextRequest('http://localhost:3000/api/todos', {
+      method: 'POST',
+      headers: {
+        origin: 'http://localhost:3000',
+        'x-real-ip': '192.0.2.126',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ title: 'Unanchored reminder', reminder_minutes: 15 }),
+    });
+    expect((await collectionRoutes.POST(reminderWithoutDueDate)).status).toBe(400);
+
     const invalidRequest = new NextRequest('http://localhost:3000/api/todos', {
       method: 'POST',
       headers: {
@@ -110,6 +121,52 @@ describe('todo API routes', () => {
 
     expect(response.status).toBe(200);
     expect(updated).toMatchObject({ title: 'Updated title', priority: 'low', due_date: null });
+  });
+
+  it('records a valid notification timestamp and rejects invalid timestamps or orphan reminders', async () => {
+    const todo = todoDB.create({
+      user_id: aliceId,
+      title: 'Reminder task',
+      due_date: '2099-12-31T12:00:00+08:00',
+      reminder_minutes: 15,
+    });
+    const request = (body: unknown) => new NextRequest(`http://localhost:3000/api/todos/${todo.id}`, {
+      method: 'PUT',
+      headers: {
+        origin: 'http://localhost:3000',
+        'x-real-ip': '192.0.2.125',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    const context = { params: Promise.resolve({ id: String(todo.id) }) };
+
+    const stampResponse = await itemRoutes.PUT(request({
+      last_notification_sent: '2030-01-01T10:00:00.000Z',
+      expected_due_date: '2099-12-31T12:00:00+08:00',
+      expected_reminder_minutes: 15,
+    }), context);
+    expect(stampResponse.status).toBe(200);
+    expect((await stampResponse.json()).last_notification_sent).toBe('2030-01-01T10:00:00.000Z');
+
+    expect((await itemRoutes.PUT(request({
+      last_notification_sent: 'not-a-timestamp',
+      expected_due_date: '2099-12-31T12:00:00+08:00',
+      expected_reminder_minutes: 15,
+    }), context)).status)
+      .toBe(400);
+    expect((await itemRoutes.PUT(request({ due_date: null, reminder_minutes: 30 }), context)).status)
+      .toBe(400);
+
+    const dueDateEdit = await itemRoutes.PUT(request({ due_date: '2099-12-31T13:00:00+08:00' }), context);
+    expect(dueDateEdit.status).toBe(200);
+    const staleStamp = await itemRoutes.PUT(request({
+      last_notification_sent: '2030-01-01T10:01:00.000Z',
+      expected_due_date: '2099-12-31T12:00:00+08:00',
+      expected_reminder_minutes: 15,
+    }), context);
+    expect(staleStamp.status).toBe(409);
+    expect((await todoDB.findByIdForUser(todo.id, aliceId))?.last_notification_sent).toBeNull();
   });
 
   it('rejects blank titles and malformed item IDs', async () => {

@@ -1,9 +1,11 @@
 'use client';
 
-import { CalendarClock, Check, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Bell, CalendarClock, Check, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { AccountActions } from '@/components/account-actions';
-import type { Priority, Todo, UpdateTodoInput } from '@/lib/db';
+import type { Priority, ReminderMinutes, Todo, UpdateTodoInput } from '@/lib/db';
+import { REMINDER_LABELS } from '@/lib/reminders';
+import { useNotifications } from '@/lib/hooks/useNotifications';
 import { formatSingaporeDateTime, formatSingaporeInput, getSingaporeNow } from '@/lib/timezone';
 import { normalizeDueDate, sectionTodos } from '@/lib/todo-utils';
 
@@ -11,6 +13,7 @@ interface FormValues {
   title: string;
   dueDate: string;
   priority: Priority;
+  reminderMinutes: ReminderMinutes | null;
 }
 
 interface ApiError {
@@ -59,6 +62,11 @@ function TodoRows({
             <span className={todo.completed ? 'todo-title is-complete' : 'todo-title'}>{todo.title}</span>
             <span className="todo-meta">
               <span className={`priority-label priority-${todo.priority}`}>{todo.priority}</span>
+              {todo.reminder_minutes !== null && (
+                <span className="reminder-badge" aria-label={`Reminder ${REMINDER_LABELS[todo.reminder_minutes]} before due time`}>
+                  <Bell size={13} aria-hidden="true" /> {REMINDER_LABELS[todo.reminder_minutes]}
+                </span>
+              )}
               {todo.due_date && (
                 <span className="todo-due">
                   <CalendarClock size={14} aria-hidden="true" />
@@ -105,8 +113,14 @@ export default function HomePage() {
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<Priority>('medium');
   const [dueDate, setDueDate] = useState('');
+  const [reminderMinutes, setReminderMinutes] = useState<ReminderMinutes | null>(null);
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
-  const [editValues, setEditValues] = useState<FormValues>({ title: '', dueDate: '', priority: 'medium' });
+  const [editValues, setEditValues] = useState<FormValues>({
+    title: '',
+    dueDate: '',
+    priority: 'medium',
+    reminderMinutes: null,
+  });
   const [now, setNow] = useState(() => getSingaporeNow());
   const [pendingTodoIds, setPendingTodoIds] = useState<Set<number>>(() => new Set());
   const pendingTodoIdsRef = useRef<Set<number>>(new Set());
@@ -226,7 +240,7 @@ export default function HomePage() {
       priority,
       is_recurring: false,
       recurrence_pattern: null,
-      reminder_minutes: null,
+      reminder_minutes: reminderMinutes,
       last_notification_sent: null,
       created_at: getSingaporeNow().toISOString(),
       updated_at: null,
@@ -237,6 +251,7 @@ export default function HomePage() {
     setTitle('');
     setPriority('medium');
     setDueDate('');
+    setReminderMinutes(null);
 
     try {
       const response = await fetch('/api/todos', {
@@ -246,6 +261,7 @@ export default function HomePage() {
           title: optimisticTodo.title,
           due_date: normalizedDueDate.value,
           priority,
+          reminder_minutes: reminderMinutes,
         }),
       });
       if (!response.ok) throw new Error(await getApiError(response));
@@ -294,6 +310,7 @@ export default function HomePage() {
       title: todo.title,
       dueDate: todo.due_date ? formatSingaporeInput(todo.due_date) : '',
       priority: todo.priority,
+      reminderMinutes: todo.reminder_minutes,
     });
   }
 
@@ -319,6 +336,7 @@ export default function HomePage() {
     const update: UpdateTodoInput = {
       title: editValues.title.trim(),
       priority: editValues.priority,
+      reminder_minutes: editValues.reminderMinutes,
       ...(dueDateChanged ? { due_date: normalizedDueDate } : {}),
     };
     if (!beginTodoMutation(previousTodo.id)) return;
@@ -326,6 +344,7 @@ export default function HomePage() {
       ...previousTodo,
       ...update,
       due_date: dueDateChanged ? normalizedDueDate ?? null : previousTodo.due_date,
+      reminder_minutes: editValues.reminderMinutes,
     };
     setTodos((currentTodos) => currentTodos.map((todo) => todo.id === previousTodo.id ? optimisticTodo : todo));
     setError(null);
@@ -390,7 +409,10 @@ export default function HomePage() {
           <span className="wordmark-mark" aria-hidden="true">T</span>
           <span>Todo</span>
         </div>
-        <AccountActions />
+        <div className="header-actions">
+          <NotificationToggle />
+          <AccountActions />
+        </div>
       </header>
 
       <section className="home-content todo-workspace">
@@ -422,9 +444,18 @@ export default function HomePage() {
               className="text-input"
               type="datetime-local"
               value={dueDate}
-              onChange={(event) => setDueDate(event.target.value)}
+              onChange={(event) => {
+                setDueDate(event.target.value);
+                if (!event.target.value) setReminderMinutes(null);
+              }}
             />
           </label>
+          <ReminderSelect
+            id="create-reminder"
+            dueDate={dueDate}
+            value={reminderMinutes}
+            onChange={setReminderMinutes}
+          />
           <button className="primary-action add-todo-action" type="submit" disabled={isLoading || isSubmitting || !title.trim()}>
             <Plus size={18} aria-hidden="true" /> Add todo
           </button>
@@ -479,8 +510,23 @@ export default function HomePage() {
               </label>
               <label>
                 <span className="field-label">Edit due date and time</span>
-                <input className="text-input" type="datetime-local" value={editValues.dueDate} onChange={(event) => setEditValues((values) => ({ ...values, dueDate: event.target.value }))} />
+                <input
+                  className="text-input"
+                  type="datetime-local"
+                  value={editValues.dueDate}
+                  onChange={(event) => setEditValues((values) => ({
+                    ...values,
+                    dueDate: event.target.value,
+                    reminderMinutes: event.target.value ? values.reminderMinutes : null,
+                  }))}
+                />
               </label>
+              <ReminderSelect
+                id="edit-reminder"
+                dueDate={editValues.dueDate}
+                value={editValues.reminderMinutes}
+                onChange={(value) => setEditValues((values) => ({ ...values, reminderMinutes: value }))}
+              />
               <div className="todo-dialog-actions">
                 <button className="secondary-action" type="button" onClick={() => setEditingTodo(null)}>Cancel</button>
                 <button
@@ -494,5 +540,70 @@ export default function HomePage() {
         </div>
       )}
     </main>
+  );
+}
+
+const reminderOptions: Array<{ value: ReminderMinutes; label: string; option: string }> = [
+  { value: 15, label: REMINDER_LABELS[15], option: '15 minutes before' },
+  { value: 30, label: REMINDER_LABELS[30], option: '30 minutes before' },
+  { value: 60, label: REMINDER_LABELS[60], option: '1 hour before' },
+  { value: 120, label: REMINDER_LABELS[120], option: '2 hours before' },
+  { value: 1440, label: REMINDER_LABELS[1440], option: '1 day before' },
+  { value: 2880, label: REMINDER_LABELS[2880], option: '2 days before' },
+  { value: 10080, label: REMINDER_LABELS[10080], option: '1 week before' },
+];
+
+function ReminderSelect({
+  id,
+  dueDate,
+  value,
+  onChange,
+}: {
+  id: string;
+  dueDate: string;
+  value: ReminderMinutes | null;
+  onChange: (value: ReminderMinutes | null) => void;
+}) {
+  return (
+    <label>
+      <span className="field-label">Reminder</span>
+      <select
+        className="text-input"
+        id={id}
+        value={value ?? ''}
+        disabled={!dueDate}
+        onChange={(event) => onChange(event.target.value ? Number(event.target.value) as ReminderMinutes : null)}
+      >
+        <option value="">None</option>
+        {reminderOptions.map(({ value: minutes, option }) => (
+          <option key={minutes} value={minutes}>{option}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function NotificationToggle() {
+  const { permission, requestPermission } = useNotifications();
+  const enabled = permission === 'granted';
+  const unavailable = permission === 'unsupported' || permission === 'denied';
+  const label = enabled
+    ? 'Notifications On'
+    : permission === 'denied'
+      ? 'Notifications Blocked'
+      : permission === 'unsupported'
+        ? 'Notifications Unavailable'
+        : 'Enable Notifications';
+
+  return (
+    <button
+      className={`secondary-action notification-action${enabled ? ' is-enabled' : ''}`}
+      type="button"
+      onClick={() => void requestPermission()}
+      disabled={enabled || unavailable}
+      title={label}
+    >
+      <Bell size={17} aria-hidden="true" /> {label}
+    </button>
   );
 }

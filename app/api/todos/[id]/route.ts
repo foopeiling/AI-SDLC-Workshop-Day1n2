@@ -9,6 +9,11 @@ import { authorizeTodoRequest } from '@/lib/todo-api-guard';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+const reminderMinutesSchema = z.union([
+  z.literal(15), z.literal(30), z.literal(60), z.literal(120),
+  z.literal(1440), z.literal(2880), z.literal(10080),
+]);
+
 const updateTodoSchema = z.object({
   title: z.string().trim().min(1, 'Title cannot be empty').optional(),
   due_date: z.string().nullable().optional(),
@@ -16,10 +21,10 @@ const updateTodoSchema = z.object({
   completed: z.boolean().optional(),
   is_recurring: z.boolean().optional(),
   recurrence_pattern: z.enum(['daily', 'weekly', 'monthly', 'yearly']).nullable().optional(),
-  reminder_minutes: z.union([
-    z.literal(15), z.literal(30), z.literal(60), z.literal(120),
-    z.literal(1440), z.literal(2880), z.literal(10080),
-  ]).nullable().optional(),
+  reminder_minutes: reminderMinutesSchema.nullable().optional(),
+  last_notification_sent: z.string().datetime({ offset: true }).optional(),
+  expected_due_date: z.string().datetime({ offset: true }).optional(),
+  expected_reminder_minutes: reminderMinutesSchema.optional(),
   tag_ids: z.array(z.number().int().positive()).optional(),
 });
 
@@ -52,7 +57,9 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
   if (guard) return guard;
 
   const id = parseTodoId((await params).id);
-  if (id === null || !todoDB.findByIdForUser(id, session.userId)) {
+  if (id === null) return NextResponse.json({ error: 'Todo not found' }, { status: 404 });
+  const existingTodo = todoDB.findByIdForUser(id, session.userId);
+  if (!existingTodo) {
     return NextResponse.json({ error: 'Todo not found' }, { status: 404 });
   }
 
@@ -61,8 +68,35 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'Invalid todo.' }, { status: 400 });
   }
 
+  if (parsed.data.last_notification_sent !== undefined) {
+    const allowedStampFields = ['last_notification_sent', 'expected_due_date', 'expected_reminder_minutes'];
+    if (
+      Object.keys(parsed.data).some((key) => !allowedStampFields.includes(key)) ||
+      !parsed.data.expected_due_date ||
+      parsed.data.expected_reminder_minutes === undefined
+    ) {
+      return NextResponse.json({ error: 'The reminder schedule is required to record a notification.' }, { status: 400 });
+    }
+
+    const todo = todoDB.markReminderSentForUser(
+      id,
+      session.userId,
+      parsed.data.expected_due_date,
+      parsed.data.expected_reminder_minutes,
+      parsed.data.last_notification_sent,
+    );
+    if (!todo) {
+      return NextResponse.json({ error: 'The reminder changed or was already acknowledged.' }, { status: 409 });
+    }
+    return NextResponse.json(todo);
+  }
+
+  if ('expected_due_date' in parsed.data || 'expected_reminder_minutes' in parsed.data) {
+    return NextResponse.json({ error: 'A notification timestamp is required to acknowledge a reminder.' }, { status: 400 });
+  }
+
   if (Object.keys(parsed.data).length === 0) {
-    return NextResponse.json(todoDB.findByIdForUser(id, session.userId));
+    return NextResponse.json(existingTodo);
   }
 
   let dueDate: string | null | undefined;
@@ -72,11 +106,24 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
     dueDate = normalized.value;
   }
 
+  const nextDueDate = 'due_date' in parsed.data ? dueDate ?? null : existingTodo.due_date;
+  const nextReminderMinutes = 'reminder_minutes' in parsed.data
+    ? parsed.data.reminder_minutes ?? null
+    : existingTodo.reminder_minutes;
+  if (nextReminderMinutes !== null && nextDueDate === null) {
+    return NextResponse.json({ error: 'A due date is required for a reminder.' }, { status: 400 });
+  }
+
+  const update = {
+    ...parsed.data,
+    ...('due_date' in parsed.data ? { due_date: dueDate } : {}),
+    ...('due_date' in parsed.data && nextDueDate === null && !('reminder_minutes' in parsed.data)
+      ? { reminder_minutes: null }
+      : {}),
+  };
+
   try {
-    const todo = todoDB.updateForUser(id, session.userId, {
-      ...parsed.data,
-      ...('due_date' in parsed.data ? { due_date: dueDate } : {}),
-    });
+    const todo = todoDB.updateForUser(id, session.userId, update);
     if (!todo) return NextResponse.json({ error: 'Todo not found' }, { status: 404 });
     return NextResponse.json(todo);
   } catch {

@@ -1,11 +1,13 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import type { ReminderMinutes } from './reminders';
 
 export type Priority = 'high' | 'medium' | 'low';
 export type RecurrencePattern = 'daily' | 'weekly' | 'monthly' | 'yearly';
-export type ReminderMinutes = 15 | 30 | 60 | 120 | 1440 | 2880 | 10080;
 export type ChallengeCeremony = 'registration' | 'login' | 'passkey-registration';
+export type { ReminderMinutes } from './reminders';
+export { REMINDER_LABELS } from './reminders';
 
 export interface User {
   id: number;
@@ -56,6 +58,7 @@ export interface CreateTodoInput {
 
 export interface UpdateTodoInput extends Partial<CreateTodoInput> {
   completed?: boolean;
+  last_notification_sent?: string | null;
 }
 
 export interface Subtask {
@@ -208,6 +211,15 @@ export function createAppDatabase(databasePath: string = process.env.DATABASE_PA
   database.pragma('foreign_keys = ON');
   database.pragma('journal_mode = WAL');
   database.exec(schema);
+  const todoColumns = new Set(
+    (database.pragma('table_info(todos)') as Array<{ name: string }>).map(({ name }) => name),
+  );
+  if (!todoColumns.has('reminder_minutes')) {
+    database.exec('ALTER TABLE todos ADD COLUMN reminder_minutes INTEGER');
+  }
+  if (!todoColumns.has('last_notification_sent')) {
+    database.exec('ALTER TABLE todos ADD COLUMN last_notification_sent TEXT');
+  }
   return database;
 }
 
@@ -479,6 +491,41 @@ export function createTodoRepository(database: AppDatabase) {
         .all(userId) as StoredTodo[];
       return hydrateTodos(rows);
     },
+    findDueRemindersByUser(userId: number, now: string): Todo[] {
+      const rows = database
+        .prepare(
+          `SELECT * FROM todos
+           WHERE user_id = ?
+             AND completed = 0
+             AND due_date IS NOT NULL
+             AND reminder_minutes IS NOT NULL
+             AND last_notification_sent IS NULL
+             AND datetime(due_date, '-' || reminder_minutes || ' minutes') <= datetime(?)
+           ORDER BY due_date, id`,
+        )
+        .all(userId, now) as StoredTodo[];
+      return hydrateTodos(rows);
+    },
+    markReminderSentForUser(
+      todoId: number,
+      userId: number,
+      expectedDueDate: string,
+      expectedReminderMinutes: ReminderMinutes,
+      sentAt: string,
+    ): Todo | null {
+      const result = database
+        .prepare(
+          `UPDATE todos SET last_notification_sent = ?, updated_at = datetime('now')
+           WHERE id = ?
+             AND user_id = ?
+             AND due_date = ?
+             AND reminder_minutes = ?
+             AND completed = 0
+             AND last_notification_sent IS NULL`,
+        )
+        .run(sentAt, todoId, userId, expectedDueDate, expectedReminderMinutes);
+      return result.changes === 1 ? findTodoById(todoId) : null;
+    },
     findById(todoId: number): Todo | null {
       return findTodoById(todoId);
     },
@@ -496,6 +543,7 @@ export function createTodoRepository(database: AppDatabase) {
         is_recurring: 'is_recurring',
         recurrence_pattern: 'recurrence_pattern',
         reminder_minutes: 'reminder_minutes',
+        last_notification_sent: 'last_notification_sent',
         tag_ids: 'tag_ids',
         completed: 'completed',
       };
@@ -514,14 +562,29 @@ export function createTodoRepository(database: AppDatabase) {
       }
 
       const updateTodo = database.transaction(() => {
-        if (updates.length > 0) {
-          const assignments = updates.map(([column]) => `${column} = ?`);
+        const current = database
+          .prepare('SELECT due_date, reminder_minutes FROM todos WHERE id = ? AND user_id = ?')
+          .get(todoId, userId) as { due_date: string | null; reminder_minutes: number | null } | undefined;
+        if (!current) return false;
+
+        const scheduleChanged =
+          ('due_date' in input && input.due_date !== current.due_date) ||
+          ('reminder_minutes' in input && input.reminder_minutes !== current.reminder_minutes);
+        const effectiveUpdates = scheduleChanged
+          ? [
+              ...updates.filter(([column]) => column !== 'last_notification_sent'),
+              ['last_notification_sent', null] as [string, unknown],
+            ]
+          : updates;
+
+        if (effectiveUpdates.length > 0) {
+          const assignments = effectiveUpdates.map(([column]) => `${column} = ?`);
           database
             .prepare(
               `UPDATE todos SET ${assignments.join(', ')}, updated_at = datetime('now')
                WHERE id = ? AND user_id = ?`,
             )
-            .run(...updates.map(([, value]) => value), todoId, userId);
+            .run(...effectiveUpdates.map(([, value]) => value), todoId, userId);
         }
 
         if ('tag_ids' in input) {

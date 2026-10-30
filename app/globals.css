@@ -249,6 +249,12 @@ input:focus-visible {
   gap: 10px;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .home-content {
   width: min(100%, 920px);
   margin: 72px auto 0;
@@ -282,7 +288,7 @@ input:focus-visible {
 
 .todo-create-form {
   display: grid;
-  grid-template-columns: minmax(200px, 1fr) minmax(125px, 160px) minmax(210px, 240px) auto;
+  grid-template-columns: minmax(200px, 1fr) minmax(125px, 160px) minmax(210px, 240px) minmax(150px, 180px) auto;
   align-items: end;
   gap: 14px;
   margin-top: 34px;
@@ -427,6 +433,20 @@ input:focus-visible {
 .priority-medium { color: #856300; }
 .priority-low { color: #315d79; }
 
+.reminder-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #9a4f24;
+  font-weight: 650;
+}
+
+.notification-action.is-enabled {
+  border-color: #b7d2bd;
+  background: #e8f2e7;
+  color: #24553b;
+}
+
 .todo-due {
   display: inline-flex;
   align-items: center;
@@ -506,6 +526,19 @@ input:focus-visible {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@media (max-width: 900px) {
+  .todo-create-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .todo-title-field,
+  .add-todo-action {
+    grid-column: 1 / -1;
+  }
+
+  .add-todo-action { width: 100%; }
+}
+
 @media (max-width: 760px) {
   .auth-layout {
     grid-template-columns: 1fr;
@@ -545,19 +578,12 @@ input:focus-visible {
     padding: 22px 0;
   }
 
-  .todo-workspace { margin-top: 38px; }
-
-  .todo-create-form {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 12px;
-  }
-
-  .todo-title-field { grid-column: 1 / -1; }
-
-  .add-todo-action {
+  .header-actions {
     width: 100%;
-    grid-column: 1 / -1;
+    justify-content: space-between;
   }
+
+  .todo-workspace { margin-top: 38px; }
 
   .todo-row {
     grid-template-columns: 26px minmax(0, 1fr) auto;
