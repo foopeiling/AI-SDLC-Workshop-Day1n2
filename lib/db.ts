@@ -70,6 +70,21 @@ export interface Subtask {
   created_at: string;
 }
 
+export interface CreateSubtaskDto {
+  title: string;
+}
+
+export interface UpdateSubtaskDto {
+  title?: string;
+  completed?: boolean;
+}
+
+type StoredSubtask = Omit<Subtask, 'completed'> & { completed: number };
+
+function normalizeSubtask(row: StoredSubtask): Subtask {
+  return { ...row, completed: Boolean(row.completed) };
+}
+
 export interface Tag {
   id: number;
   user_id: number;
@@ -401,7 +416,7 @@ export function createTodoRepository(database: AppDatabase) {
     const placeholders = todoIds.map(() => '?').join(', ');
     const subtasks = database
       .prepare(`SELECT * FROM subtasks WHERE todo_id IN (${placeholders}) ORDER BY position, id`)
-      .all(...todoIds) as Subtask[];
+      .all(...todoIds) as StoredSubtask[];
     const tags = database
       .prepare(
         `SELECT todo_tags.todo_id, tags.* FROM todo_tags
@@ -414,7 +429,7 @@ export function createTodoRepository(database: AppDatabase) {
       const todo = normalizeTodo(row);
       return {
         ...todo,
-        subtasks: subtasks.filter((subtask) => subtask.todo_id === todo.id),
+        subtasks: subtasks.filter((subtask) => subtask.todo_id === todo.id).map(normalizeSubtask),
         tags: tags
           .filter((tag) => tag.todo_id === todo.id)
           .map((tag) => ({
@@ -611,6 +626,68 @@ export function createTodoRepository(database: AppDatabase) {
   return todoDB;
 }
 
+export function createSubtaskRepository(database: AppDatabase) {
+  const findById = database.prepare<[number], StoredSubtask>('SELECT * FROM subtasks WHERE id = ?');
+  const findOwned = database.prepare<[number, number], StoredSubtask>(
+    `SELECT subtasks.* FROM subtasks
+     INNER JOIN todos ON todos.id = subtasks.todo_id
+     WHERE subtasks.id = ? AND todos.user_id = ?`,
+  );
+
+  function trimTitle(title: string): string {
+    const trimmed = title.trim();
+    if (!trimmed) throw new Error('Subtask title is required');
+    return trimmed;
+  }
+
+  return {
+    findByTodoId(todoId: number): Subtask[] {
+      return database.prepare<[number], StoredSubtask>(
+        'SELECT * FROM subtasks WHERE todo_id = ? ORDER BY position, id',
+      ).all(todoId).map(normalizeSubtask);
+    },
+    findByIdForUser(id: number, userId: number): Subtask | null {
+      const row = findOwned.get(id, userId);
+      return row ? normalizeSubtask(row) : null;
+    },
+    create(todoId: number, data: CreateSubtaskDto): Subtask {
+      const title = trimTitle(data.title);
+      const insert = database.transaction(() => {
+        const result = database.prepare(
+          `INSERT INTO subtasks (todo_id, title, position)
+           SELECT ?, ?, COALESCE(MAX(position), -1) + 1 FROM subtasks WHERE todo_id = ?`,
+        ).run(todoId, title, todoId);
+        const row = findById.get(Number(result.lastInsertRowid));
+        if (!row) throw new Error('Created subtask could not be read');
+        return normalizeSubtask(row);
+      });
+      return insert.immediate();
+    },
+    updateForUser(id: number, userId: number, data: UpdateSubtaskDto): Subtask | null {
+      const title = data.title === undefined ? undefined : trimTitle(data.title);
+      const row = database.prepare(
+        `UPDATE subtasks SET
+           title = COALESCE(?, title), completed = COALESCE(?, completed)
+         WHERE id = ? AND todo_id IN (SELECT id FROM todos WHERE user_id = ?)
+         RETURNING *`,
+      ).get(
+        title ?? null,
+        data.completed === undefined ? null : Number(data.completed),
+        id,
+        userId,
+      ) as StoredSubtask | undefined;
+      return row ? normalizeSubtask(row) : null;
+    },
+    deleteForUser(id: number, userId: number): boolean {
+      return database.prepare(
+        `DELETE FROM subtasks
+         WHERE id = ? AND todo_id IN (SELECT id FROM todos WHERE user_id = ?)`,
+      ).run(id, userId).changes === 1;
+    },
+  };
+}
+
 export const db = createAppDatabase();
 export const { userDB, authenticatorDB, challengeDB, rateLimitDB } = createAuthRepositories(db);
 export const todoDB = createTodoRepository(db);
+export const subtaskDB = createSubtaskRepository(db);

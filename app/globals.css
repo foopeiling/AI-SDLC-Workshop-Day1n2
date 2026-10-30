@@ -473,6 +473,35 @@ input:focus-visible {
 .icon-action:hover { background: #e7eee6; color: var(--forest-deep); }
 .icon-action.delete-action:hover { background: #f7e9e5; color: #a93630; }
 
+.subtasks {
+  grid-column: 2 / -1;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.subtask-toggle, .subtask-add {
+  border: 0;
+  background: transparent;
+  color: var(--forest);
+  cursor: pointer;
+}
+
+.subtask-toggle { padding: 4px 0; }
+.subtask-progress { margin: 6px 0 10px; }
+.subtask-progress-label { display: flex; justify-content: space-between; color: var(--muted); }
+.subtask-progress-track { height: 7px; margin-top: 5px; overflow: hidden; border-radius: 4px; background: var(--line); }
+.subtask-progress-fill { height: 100%; background: #2563eb; transition: width 200ms; }
+.subtask-progress-fill.is-complete { background: #16a34a; }
+.subtask-list { padding: 0; margin: 6px 0; list-style: none; }
+.subtask-row, .subtask-row label, .subtask-form { display: flex; align-items: center; gap: 8px; }
+.subtask-row label { flex: 1; min-width: 0; }
+.subtask-row label span { overflow-wrap: anywhere; }
+.subtask-row input { flex-shrink: 0; accent-color: var(--forest); }
+.subtask-row .is-complete { color: var(--muted); text-decoration: line-through; }
+.subtask-form .text-input { min-width: 0; height: 36px; flex: 1; }
+.subtask-add { padding: 8px; }
+.subtasks button:disabled, .subtasks input:disabled { cursor: not-allowed; opacity: 0.6; }
+
 .todo-dialog-backdrop {
   position: fixed;
   z-index: 20;
