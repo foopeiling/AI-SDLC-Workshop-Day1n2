@@ -599,11 +599,32 @@ export function createTodoRepository(database: AppDatabase) {
         // Un-completing and re-completing must not stack a second pending copy of the same occurrence.
         const alreadyScheduled = database
           .prepare(
-            `SELECT 1 FROM todos
-             WHERE user_id = ? AND title = ? AND completed = 0
-               AND recurrence_pattern = ? AND due_date = ?`,
+            `SELECT candidate.id FROM todos AS candidate
+             WHERE candidate.user_id = ? AND candidate.title = ? AND candidate.completed = 0
+               AND candidate.is_recurring = 1 AND candidate.recurrence_pattern = ?
+               AND candidate.due_date = ? AND candidate.priority = ?
+               AND candidate.reminder_minutes IS ?
+               AND NOT EXISTS (
+                 SELECT tag_id FROM todo_tags WHERE todo_id = candidate.id
+                 EXCEPT
+                 SELECT tag_id FROM todo_tags WHERE todo_id = ?
+               )
+               AND NOT EXISTS (
+                 SELECT tag_id FROM todo_tags WHERE todo_id = ?
+                 EXCEPT
+                 SELECT tag_id FROM todo_tags WHERE todo_id = candidate.id
+               )`,
           )
-          .get(userId, todo.title, todo.recurrence_pattern, nextDueDate);
+          .get(
+            userId,
+            todo.title,
+            todo.recurrence_pattern,
+            nextDueDate,
+            todo.priority,
+            todo.reminder_minutes,
+            todo.id,
+            todo.id,
+          );
         if (alreadyScheduled) return { todo, nextInstance: null };
 
         const nextInstance = todoDB.create({

@@ -80,6 +80,41 @@ describe('todoDB.updateWithRecurrence', () => {
     expect(todoDB.findAllByUser(userIds[0])).toHaveLength(2);
   });
 
+  it('does not treat a same-title todo with different copied settings as the same recurrence', () => {
+    const { todoDB, userIds, tagIds } = setup();
+    const first = todoDB.create({
+      user_id: userIds[0],
+      title: 'Review report',
+      priority: 'high',
+      due_date: '2030-01-01T09:00:00+08:00',
+      is_recurring: true,
+      recurrence_pattern: 'daily',
+      reminder_minutes: 60,
+      tag_ids: [tagIds[0]],
+    });
+    const second = todoDB.create({
+      user_id: userIds[0],
+      title: 'Review report',
+      priority: 'low',
+      due_date: '2030-01-01T09:00:00+08:00',
+      is_recurring: true,
+      recurrence_pattern: 'daily',
+      reminder_minutes: 30,
+      tag_ids: [tagIds[1]],
+    });
+
+    todoDB.updateWithRecurrence(first.id, userIds[0], { completed: true });
+    const result = todoDB.updateWithRecurrence(second.id, userIds[0], { completed: true });
+
+    expect(result?.nextInstance).toMatchObject({
+      priority: 'low',
+      reminder_minutes: 30,
+      due_date: '2030-01-02T09:00:00+08:00',
+    });
+    expect(result?.nextInstance?.tags?.map((tag) => tag.id)).toEqual([tagIds[1]]);
+    expect(todoDB.findAllByUser(userIds[0])).toHaveLength(4);
+  });
+
   it('does not spawn a second pending instance when a todo is un-completed and completed again', () => {
     const { todoDB, userIds } = setup();
     const todo = todoDB.create({
