@@ -190,6 +190,13 @@ If you already have the project folder:
 cd /path/to/todo-app
 ```
 
+### Configure Passkey Authentication
+Create `.env.local` from `.env.example` and set `SESSION_SECRET` to a new random value of at least 32 bytes. Generate one with:
+```bash
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+```
+For local development, keep `RP_ID=localhost`, `RP_ORIGIN=http://localhost:3000`, and `TRUSTED_PROXY=false`. In production, use the public HTTPS origin and its matching RP ID. Set `TRUSTED_PROXY=true` only when the ingress proxy overwrites client-supplied `X-Real-IP`/`X-Forwarded-For` headers and direct access to the app server is blocked.
+
 ### Install Dependencies
 ```bash
 # Install all npm packages (this may take a few minutes)
