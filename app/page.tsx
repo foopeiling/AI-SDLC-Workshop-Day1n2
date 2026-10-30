@@ -1,8 +1,9 @@
 'use client';
 
-import { Bell, CalendarClock, Check, Pencil, Plus, Tag as TagIcon, Trash2, X } from 'lucide-react';
+import { Bell, CalendarClock, Check, Download, FileSpreadsheet, Pencil, Plus, Tag as TagIcon, Trash2, Upload, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { AccountActions } from '@/components/account-actions';
+import Link from 'next/link';
 import type { Priority, ReminderMinutes, Subtask, Todo, UpdateTodoInput } from '@/lib/db';
 import type { CreateTagInput, Tag, UpdateTagInput } from '@/lib/db';
 import { REMINDER_LABELS } from '@/lib/reminders';
@@ -20,6 +21,11 @@ interface FormValues {
 
 interface ApiError {
   error?: string;
+}
+
+interface ImportMessage {
+  type: 'success' | 'error' | 'info';
+  text: string;
 }
 
 async function getApiError(response: Response): Promise<string> {
@@ -271,7 +277,9 @@ export default function HomePage() {
   const [user, setUser] = useState<{ userId: number; username: string } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [importMessage, setImportMessage] = useState<ImportMessage | null>(null);
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<Priority>('medium');
   const [priorityFilter, setPriorityFilter] = useState<Priority | 'all'>('all');
@@ -299,6 +307,7 @@ export default function HomePage() {
   const editOpenerRef = useRef<HTMLElement | null>(null);
   const manageTagsDialogRef = useRef<HTMLElement | null>(null);
   const manageTagsOpenerRef = useRef<HTMLElement | null>(null);
+  const importFileRef = useRef<HTMLInputElement | null>(null);
 
   function beginTodoMutation(todoId: number): boolean {
     if (pendingTodoIdsRef.current.has(todoId)) return false;
@@ -531,6 +540,59 @@ export default function HomePage() {
       setError(caughtError instanceof Error ? caughtError.message : 'Could not delete tag.');
     }
   }
+
+  async function importTodos(event: React.ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    setImportMessage(file.size > 10 * 1024 * 1024
+      ? { type: 'info', text: 'Large backup detected; import may take a while.' }
+      : null);
+    try {
+      const payload: unknown = JSON.parse(await file.text());
+      const response = await fetch('/api/todos/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json() as { error?: string; imported?: number };
+      if (!response.ok) throw new Error(result.error ?? 'Failed to import todos.');
+
+      const importedCount = result.imported ?? 0;
+      try {
+        const [todoResponse, tagResponse] = await Promise.all([
+          fetch('/api/todos'),
+          fetch('/api/tags'),
+        ]);
+        if (!todoResponse.ok || !tagResponse.ok) throw new Error('List refresh failed');
+        const [loadedTodos, loadedTags] = await Promise.all([
+          todoResponse.json() as Promise<Todo[]>,
+          tagResponse.json() as Promise<Tag[]>,
+        ]);
+        setTodos(loadedTodos);
+        setTags(loadedTags);
+        setImportMessage({ type: 'success', text: `Successfully imported ${importedCount} todos` });
+      } catch {
+        setImportMessage({
+          type: 'success',
+          text: `Successfully imported ${importedCount} todos. Reload the page to refresh the list.`,
+        });
+      }
+    } catch (caughtError) {
+      setImportMessage({
+        type: 'error',
+        text: caughtError instanceof SyntaxError
+          ? 'Invalid JSON format'
+          : caughtError instanceof Error ? caughtError.message : 'Failed to import todos.',
+      });
+    } finally {
+      setIsImporting(false);
+      input.value = '';
+    }
+  }
+
   async function addTodo(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user || !title.trim()) return;
@@ -780,6 +842,43 @@ export default function HomePage() {
           <span>Todo</span>
         </div>
         <div className="header-actions">
+          <div className="export-import-toolbar" aria-label="Export and import todos">
+            <Link className="export-import-action export-json-action" href="/api/todos/export?format=json">
+              <Download size={15} aria-hidden="true" /> Export JSON
+            </Link>
+            <Link className="export-import-action export-csv-action" href="/api/todos/export?format=csv">
+              <FileSpreadsheet size={15} aria-hidden="true" /> Export CSV
+            </Link>
+            <button
+              className="export-import-action import-action"
+              type="button"
+              aria-describedby="import-note"
+              disabled={isImporting}
+              onClick={() => importFileRef.current?.click()}
+            >
+              <Upload size={15} aria-hidden="true" /> {isImporting ? 'Importing...' : 'Import'}
+            </button>
+            <input
+              ref={importFileRef}
+              aria-label="Choose JSON file to import"
+              className="import-file-input"
+              type="file"
+              accept="application/json,.json"
+              onChange={importTodos}
+            />
+            <span className="import-note" id="import-note">
+              Imports add todos; existing todos do not merge.
+            </span>
+            {importMessage && (
+              <p
+                className={`import-message import-message-${importMessage.type}`}
+                data-testid="import-status"
+                role={importMessage.type === 'error' ? 'alert' : 'status'}
+              >
+                {importMessage.text}
+              </p>
+            )}
+          </div>
           <NotificationToggle />
           <AccountActions />
         </div>

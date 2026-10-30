@@ -49,6 +49,26 @@ export interface Todo {
   tags?: Tag[];
 }
 
+export interface TodoExportItem extends Omit<
+  Todo,
+  'id' | 'user_id' | 'updated_at' | 'last_notification_sent' | 'subtasks' | 'tags'
+> {
+  subtasks: Array<Omit<Subtask, 'id' | 'todo_id' | 'created_at'>>;
+  tags: Array<Pick<Tag, 'name' | 'color'>>;
+}
+
+export interface TodoExport {
+  version: 1;
+  exported_at: string;
+  todos: TodoExportItem[];
+}
+
+export interface ImportResult {
+  imported: number;
+  tagsCreated: number;
+  tagsReused: number;
+}
+
 export interface CreateTodoInput {
   title: string;
   due_date?: string | null;
@@ -520,6 +540,57 @@ export function createTodoRepository(database: AppDatabase) {
         .prepare('SELECT * FROM todos WHERE user_id = ? ORDER BY created_at DESC, id DESC')
         .all(userId) as StoredTodo[];
       return hydrateTodos(rows);
+    },
+    importAll(userId: number, items: TodoExportItem[]): ImportResult {
+      let tagsCreated = 0;
+      let tagsReused = 0;
+      const insertTodo = database.prepare(
+        `INSERT INTO todos
+          (user_id, title, completed, due_date, priority, is_recurring, recurrence_pattern,
+           reminder_minutes, last_notification_sent, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL)`,
+      );
+      const insertSubtask = database.prepare(
+        'INSERT INTO subtasks (todo_id, title, completed, position) VALUES (?, ?, ?, ?)',
+      );
+      const findTagByName = database.prepare(
+        'SELECT id FROM tags WHERE user_id = ? AND name = ? COLLATE NOCASE',
+      );
+      const insertTag = database.prepare(
+        'INSERT INTO tags (user_id, name, color) VALUES (?, ?, ?)',
+      );
+      const linkTag = database.prepare('INSERT OR IGNORE INTO todo_tags (todo_id, tag_id) VALUES (?, ?)');
+
+      const importTodos = database.transaction(() => {
+        for (const item of items) {
+          const todoId = Number(insertTodo.run(
+            userId,
+            item.title,
+            Number(item.completed),
+            item.due_date,
+            item.priority,
+            Number(item.is_recurring),
+            item.recurrence_pattern,
+            item.reminder_minutes,
+            item.created_at,
+          ).lastInsertRowid);
+
+          item.subtasks.forEach((subtask, index) => {
+            insertSubtask.run(todoId, subtask.title, Number(subtask.completed), index);
+          });
+
+          for (const tag of item.tags) {
+            const existing = findTagByName.get(userId, tag.name) as { id: number } | undefined;
+            const tagId = existing
+              ? (tagsReused += 1, existing.id)
+              : (tagsCreated += 1, Number(insertTag.run(userId, tag.name, tag.color).lastInsertRowid));
+            linkTag.run(todoId, tagId);
+          }
+        }
+      });
+
+      importTodos.immediate();
+      return { imported: items.length, tagsCreated, tagsReused };
     },
     findDueRemindersByUser(userId: number, now: string): Todo[] {
       const rows = database

@@ -252,9 +252,64 @@ select:focus-visible {
 
 .header-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
 }
+
+.export-import-toolbar {
+  display: flex;
+  max-width: 470px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.export-import-action {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.export-json-action {
+  border-color: var(--forest);
+  background: var(--forest);
+  color: white;
+}
+
+.export-csv-action {
+  border-color: var(--forest-deep);
+  background: var(--forest-deep);
+  color: white;
+}
+
+.export-import-action:disabled { cursor: wait; opacity: 0.65; }
+.import-file-input { display: none; }
+
+.import-note,
+.import-message {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.import-note { color: var(--muted); }
+.import-message-success { color: var(--forest); }
+.import-message-error { color: var(--danger); }
+.import-message-info { color: var(--muted); }
 
 .home-content {
   width: min(100%, 920px);
@@ -826,6 +881,8 @@ select:focus-visible {
     width: 100%;
     justify-content: space-between;
   }
+
+  .export-import-toolbar { max-width: 100%; }
 
   .todo-workspace { margin-top: 38px; }
 

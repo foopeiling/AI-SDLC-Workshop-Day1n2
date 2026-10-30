@@ -229,6 +229,127 @@ describe('todo repository', () => {
     )).toBeNull();
   });
 
+  it('imports todos with new IDs, ordered subtasks, reminders, and case-insensitive tag reuse', () => {
+    const { database, todoDB, userIds } = createTodoDb();
+    const sourceTodo = todoDB.create({ user_id: userIds[0], title: 'Source task' });
+    const existingTagId = Number(
+      database.prepare('INSERT INTO tags (user_id, name, color) VALUES (?, ?, ?)')
+        .run(userIds[0], 'Work', '#AA2233').lastInsertRowid,
+    );
+    const otherUsersTagId = Number(
+      database.prepare('INSERT INTO tags (user_id, name, color) VALUES (?, ?, ?)')
+        .run(userIds[1], 'Work', '#112233').lastInsertRowid,
+    );
+    const items = [
+      {
+        title: 'Imported project',
+        completed: true,
+        due_date: '2030-02-03T14:30:00+08:00',
+        priority: 'high' as const,
+        is_recurring: true,
+        recurrence_pattern: 'weekly' as const,
+        reminder_minutes: 30 as const,
+        created_at: '2025-01-02T03:04:05.000Z',
+        subtasks: [
+          { title: 'First step', completed: true, position: 8 },
+          { title: 'Second step', completed: false, position: 3 },
+        ],
+        tags: [
+          { name: 'work', color: '#FFFFFF' },
+          { name: 'WORK', color: '#000000' },
+          { name: 'Research', color: '#336699' },
+        ],
+      },
+      {
+        title: 'Imported follow-up',
+        completed: false,
+        due_date: null,
+        priority: 'medium' as const,
+        is_recurring: false,
+        recurrence_pattern: null,
+        reminder_minutes: null,
+        created_at: '2025-02-03T04:05:06.000Z',
+        subtasks: [],
+        tags: [{ name: 'WORK', color: '#000000' }, { name: 'research', color: '#000000' }],
+      },
+    ];
+
+    const result = todoDB.importAll(userIds[0], items);
+    const imported = todoDB.findAllByUser(userIds[0])
+      .filter((todo) => todo.title.startsWith('Imported'))
+      .sort((first, second) => first.title.localeCompare(second.title));
+    const importedProject = imported.find((todo) => todo.title === 'Imported project');
+    const importedFollowUp = imported.find((todo) => todo.title === 'Imported follow-up');
+
+    expect(result).toEqual({ imported: 2, tagsCreated: 1, tagsReused: 4 });
+    expect(imported).toHaveLength(2);
+    expect(imported.every((todo) => todo.id !== sourceTodo.id)).toBe(true);
+    expect(importedProject).toMatchObject({
+      completed: true,
+      due_date: '2030-02-03T14:30:00+08:00',
+      priority: 'high',
+      is_recurring: true,
+      recurrence_pattern: 'weekly',
+      reminder_minutes: 30,
+      last_notification_sent: null,
+      created_at: '2025-01-02T03:04:05.000Z',
+    });
+    expect(importedProject?.subtasks?.map(({ title, position, completed }) => ({ title, position, completed })))
+      .toEqual([
+        { title: 'First step', position: 0, completed: true },
+        { title: 'Second step', position: 1, completed: false },
+      ]);
+    expect(importedProject?.subtasks?.every((subtask) => subtask.todo_id === importedProject.id)).toBe(true);
+    expect(importedProject?.tags?.map(({ name }) => name)).toEqual(['Research', 'Work']);
+    expect(importedFollowUp?.tags?.map(({ name }) => name)).toEqual(['Research', 'Work']);
+    expect(importedProject?.tags?.find(({ id }) => id === existingTagId)?.color).toBe('#AA2233');
+    expect(imported.every((todo) => todo.tags?.every(({ id }) => id !== otherUsersTagId))).toBe(true);
+    expect(database.prepare('SELECT count(*) AS count FROM tags WHERE user_id = ?').get(userIds[0]))
+      .toEqual({ count: 2 });
+  });
+
+  it('rolls back every imported record if a later todo insert fails', () => {
+    const { database, todoDB, userIds } = createTodoDb();
+    database.exec(`
+      CREATE TRIGGER reject_late_import BEFORE INSERT ON todos
+      WHEN NEW.title = 'Fail import'
+      BEGIN SELECT RAISE(ABORT, 'Import rejected'); END;
+    `);
+    const items = [
+      {
+        title: 'Write before failure',
+        completed: false,
+        due_date: null,
+        priority: 'medium' as const,
+        is_recurring: false,
+        recurrence_pattern: null,
+        reminder_minutes: null,
+        created_at: '2025-01-02T03:04:05.000Z',
+        subtasks: [{ title: 'Child', completed: false, position: 0 }],
+        tags: [{ name: 'New tag', color: '#336699' }],
+      },
+      {
+        title: 'Fail import',
+        completed: false,
+        due_date: null,
+        priority: 'low' as const,
+        is_recurring: false,
+        recurrence_pattern: null,
+        reminder_minutes: null,
+        created_at: '2025-01-03T03:04:05.000Z',
+        subtasks: [],
+        tags: [],
+      },
+    ];
+
+    expect(() => todoDB.importAll(userIds[0], items)).toThrow('Import rejected');
+    expect(todoDB.findAllByUser(userIds[0])).toEqual([]);
+    expect(database.prepare('SELECT count(*) AS count FROM subtasks').get()).toEqual({ count: 0 });
+    expect(database.prepare('SELECT count(*) AS count FROM tags WHERE user_id = ?').get(userIds[0]))
+      .toEqual({ count: 0 });
+    expect(database.prepare('SELECT count(*) AS count FROM todo_tags').get()).toEqual({ count: 0 });
+  });
+
   it('deletes only an owned todo and cascades to subtasks and tag links', () => {
     const { database, todoDB, userIds } = createTodoDb();
     const todo = todoDB.create({ user_id: userIds[0], title: 'Delete me' });
