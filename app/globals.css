@@ -31,7 +31,8 @@ input {
 }
 
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 3px solid #d88a55;
   outline-offset: 3px;
 }
@@ -312,6 +313,16 @@ input:focus-visible {
   margin: 0;
 }
 
+.todo-filter-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.todo-filter-bar label {
+  width: min(100%, 240px);
+}
+
 .todo-error { margin-top: 16px; }
 .todo-sections { margin-top: 16px; }
 .todo-section { margin-top: 34px; }
@@ -419,13 +430,35 @@ input:focus-visible {
 }
 
 .priority-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 23px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
   font-weight: 700;
+  font-size: 12px;
+  line-height: 1.2;
   text-transform: capitalize;
 }
 
-.priority-high { color: #a93630; }
-.priority-medium { color: #856300; }
-.priority-low { color: #315d79; }
+.priority-high {
+  border-color: #fecaca;
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.priority-medium {
+  border-color: #fde68a;
+  background: #fef3c7;
+  color: #854d0e;
+}
+
+.priority-low {
+  border-color: #bfdbfe;
+  background: #dbeafe;
+  color: #1e40af;
+}
 
 .todo-due {
   display: inline-flex;

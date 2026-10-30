@@ -1,7 +1,6 @@
-import type { Priority, Todo } from './db';
+import type { Todo } from './db';
+import { PRIORITY_ORDER } from './priority';
 import { formatSingaporeIsoDateTime, parseSingaporeDateTime } from './timezone';
-
-const PRIORITY_ORDER: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
 
 type DueDateResult =
   | { success: true; value: string | null }

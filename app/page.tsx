@@ -104,6 +104,7 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<Priority>('medium');
+  const [priorityFilter, setPriorityFilter] = useState<Priority | 'all'>('all');
   const [dueDate, setDueDate] = useState('');
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
   const [editValues, setEditValues] = useState<FormValues>({ title: '', dueDate: '', priority: 'medium' });
@@ -202,7 +203,10 @@ export default function HomePage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [editingTodo]);
 
-  const sections = sectionTodos(todos, now);
+  const filteredTodos = priorityFilter === 'all'
+    ? todos
+    : todos.filter((todo) => todo.priority === priorityFilter);
+  const sections = sectionTodos(filteredTodos, now);
 
   async function addTodo(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -430,11 +434,29 @@ export default function HomePage() {
           </button>
         </form>
 
+        <div className="todo-filter-bar">
+          <label>
+            <span className="field-label">Filter by priority</span>
+            <select
+              className="text-input"
+              value={priorityFilter}
+              onChange={(event) => setPriorityFilter(event.target.value as Priority | 'all')}
+            >
+              <option value="all">All Priorities</option>
+              <option value="high">High Priority</option>
+              <option value="medium">Medium Priority</option>
+              <option value="low">Low Priority</option>
+            </select>
+          </label>
+        </div>
+
         {error && <p className="auth-error todo-error" role="alert">{error}</p>}
         {isLoading ? (
           <p className="empty-state" role="status">Loading todos…</p>
         ) : todos.length === 0 ? (
           <p className="empty-state">No todos yet.</p>
+        ) : filteredTodos.length === 0 ? (
+          <p className="empty-state" role="status">No todos match this priority.</p>
         ) : (
           <div className="todo-sections" aria-live="polite">
             {renderSection('Overdue', sections.overdue, 'overdue-section')}

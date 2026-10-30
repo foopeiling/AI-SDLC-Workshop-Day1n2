@@ -87,6 +87,53 @@ describe('todo API routes', () => {
     expect((await collectionRoutes.POST(invalidRequest)).status).toBe(400);
   });
 
+  it('filters todos by priority and rejects an invalid priority query', async () => {
+    todoDB.create({ user_id: aliceId, title: 'High task', priority: 'high' });
+    todoDB.create({ user_id: aliceId, title: 'Medium task', priority: 'medium' });
+    todoDB.create({ user_id: bobId, title: 'Another high task', priority: 'high' });
+
+    const filteredRequest = new NextRequest('http://localhost:3000/api/todos?priority=high');
+    const filteredResponse = await collectionRoutes.GET(filteredRequest);
+    const filteredTodos = await filteredResponse.json();
+
+    expect(filteredResponse.status).toBe(200);
+    expect(filteredTodos.map((todo: { title: string }) => todo.title)).toEqual(['High task']);
+
+    const invalidRequest = new NextRequest('http://localhost:3000/api/todos?priority=urgent');
+    expect((await collectionRoutes.GET(invalidRequest)).status).toBe(400);
+  });
+
+  it('rejects invalid priorities on create and update without changing stored data', async () => {
+    const createRequest = new NextRequest('http://localhost:3000/api/todos', {
+      method: 'POST',
+      headers: {
+        origin: 'http://localhost:3000',
+        'x-real-ip': '192.0.2.125',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ title: 'Invalid priority', priority: 'urgent' }),
+    });
+    expect((await collectionRoutes.POST(createRequest)).status).toBe(400);
+    expect(todoDB.findAllByUser(aliceId)).toHaveLength(0);
+
+    const todo = todoDB.create({ user_id: aliceId, title: 'Keep priority', priority: 'low' });
+    const updateRequest = new NextRequest(`http://localhost:3000/api/todos/${todo.id}`, {
+      method: 'PUT',
+      headers: {
+        origin: 'http://localhost:3000',
+        'x-real-ip': '192.0.2.126',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ priority: 'urgent' }),
+    });
+
+    const updateResponse = await itemRoutes.PUT(updateRequest, {
+      params: Promise.resolve({ id: String(todo.id) }),
+    });
+    expect(updateResponse.status).toBe(400);
+    expect(todoDB.findByIdForUser(todo.id, aliceId)?.priority).toBe('low');
+  });
+
   it('updates only supplied fields and allows clearing a due date', async () => {
     const todo = todoDB.create({
       user_id: aliceId,

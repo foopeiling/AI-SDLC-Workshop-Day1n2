@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
-import { todoDB } from '@/lib/db';
+import { PRIORITY_VALUES, todoDB } from '@/lib/db';
 import { readJsonBody } from '@/lib/auth-validation';
 import { getSingaporeNow } from '@/lib/timezone';
 import { normalizeDueDate } from '@/lib/todo-utils';
@@ -11,11 +11,12 @@ const reminderMinutesSchema = z.union([
   z.literal(15), z.literal(30), z.literal(60), z.literal(120),
   z.literal(1440), z.literal(2880), z.literal(10080),
 ]);
+const prioritySchema = z.enum(PRIORITY_VALUES);
 
 const createTodoSchema = z.object({
   title: z.string().trim().min(1, 'Title is required'),
   due_date: z.string().nullable().optional(),
-  priority: z.enum(['high', 'medium', 'low']).optional(),
+  priority: prioritySchema.optional(),
   is_recurring: z.boolean().optional(),
   recurrence_pattern: z.enum(['daily', 'weekly', 'monthly', 'yearly']).nullable().optional(),
   reminder_minutes: reminderMinutesSchema.nullable().optional(),
@@ -29,7 +30,17 @@ export async function GET(request: NextRequest) {
   const guard = authorizeTodoRequest(request, 'todos:list');
   if (guard) return guard;
 
-  return NextResponse.json(todoDB.findAllByUser(session.userId));
+  const priority = request.nextUrl.searchParams.get('priority');
+  const parsedPriority = priority === null ? undefined : prioritySchema.safeParse(priority);
+  if (parsedPriority && !parsedPriority.success) {
+    return NextResponse.json({ error: 'Priority must be high, medium, or low.' }, { status: 400 });
+  }
+
+  const todos = todoDB.findAllByUser(session.userId);
+  const selectedPriority = parsedPriority?.success ? parsedPriority.data : undefined;
+  return NextResponse.json(
+    selectedPriority ? todos.filter((todo) => todo.priority === selectedPriority) : todos,
+  );
 }
 
 export async function POST(request: NextRequest) {
