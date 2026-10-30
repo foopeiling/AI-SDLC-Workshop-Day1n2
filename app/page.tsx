@@ -1,13 +1,16 @@
 'use client';
 
-import { Bell, CalendarClock, Check, Pencil, Plus, Tag as TagIcon, Trash2, X } from 'lucide-react';
+import { Bell, CalendarClock, Check, Pencil, Plus, Save, Search, Tag as TagIcon, Trash2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { AccountActions } from '@/components/account-actions';
 import type { Priority, ReminderMinutes, Subtask, Todo, UpdateTodoInput } from '@/lib/db';
 import type { CreateTagInput, Tag, UpdateTagInput } from '@/lib/db';
 import { REMINDER_LABELS } from '@/lib/reminders';
 import { useNotifications } from '@/lib/hooks/useNotifications';
+import { useDebounce } from '@/lib/hooks/useDebounce';
 import { calculateProgress } from '@/lib/subtask-utils';
+import { applyFilters, DEFAULT_FILTER_STATE, hasActiveFilters, type FilterPreset, type FilterState } from '@/lib/filters';
+import { deletePreset, loadPresets, savePreset } from '@/lib/filter-presets';
 import { formatSingaporeDateTime, formatSingaporeInput, getSingaporeNow } from '@/lib/timezone';
 import { normalizeDueDate, sectionTodos } from '@/lib/todo-utils';
 
@@ -29,6 +32,12 @@ async function getApiError(response: Response): Promise<string> {
   } catch {
     return 'The request could not be completed.';
   }
+}
+
+async function fetchCurrentTags(): Promise<Tag[] | null> {
+  const response = await fetch('/api/tags', { cache: 'no-store' });
+  if (!response.ok) return null;
+  return await response.json() as Tag[];
 }
 
 function getTagTextColor(color: string): string {
@@ -274,7 +283,14 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<Priority>('medium');
-  const [priorityFilter, setPriorityFilter] = useState<Priority | 'all'>('all');
+  const [filters, setFilters] = useState<FilterState>(() => ({ ...DEFAULT_FILTER_STATE }));
+  const [presetSearchOverride, setPresetSearchOverride] = useState<string | null>(null);
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
+  const [filterPresets, setFilterPresets] = useState<FilterPreset[]>([]);
+  const [presetsLoaded, setPresetsLoaded] = useState(false);
+  const [saveFilterOpen, setSaveFilterOpen] = useState(false);
+  const [filterPresetName, setFilterPresetName] = useState('');
+  const [filterError, setFilterError] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState('');
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
   const [reminderMinutes, setReminderMinutes] = useState<ReminderMinutes | null>(null);
@@ -286,7 +302,6 @@ export default function HomePage() {
     reminderMinutes: null,
   });
   const [editTagIds, setEditTagIds] = useState<number[]>([]);
-  const [activeTagFilter, setActiveTagFilter] = useState<number | null>(null);
   const [manageTagsOpen, setManageTagsOpen] = useState(false);
   const [editingTagId, setEditingTagId] = useState<number | null>(null);
   const [newTagName, setNewTagName] = useState('');
@@ -299,6 +314,9 @@ export default function HomePage() {
   const editOpenerRef = useRef<HTMLElement | null>(null);
   const manageTagsDialogRef = useRef<HTMLElement | null>(null);
   const manageTagsOpenerRef = useRef<HTMLElement | null>(null);
+  const saveFilterDialogRef = useRef<HTMLElement | null>(null);
+  const saveFilterOpenerRef = useRef<HTMLElement | null>(null);
+  const debouncedSearch = useDebounce(filters.search, 300);
 
   function beginTodoMutation(todoId: number): boolean {
     if (pendingTodoIdsRef.current.has(todoId)) return false;
@@ -353,6 +371,50 @@ export default function HomePage() {
     return () => {
       active = false;
       window.clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      setFilterPresets(loadPresets());
+      setPresetsLoaded(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function refreshTags() {
+      try {
+        const latestTags = await fetchCurrentTags();
+        if (!active || !latestTags) return;
+        const latestTagsById = new Map(latestTags.map((tag) => [tag.id, tag]));
+        setTags(latestTags);
+        setTodos((currentTodos) => currentTodos.map((todo) => ({
+          ...todo,
+          tags: todo.tags?.flatMap((tag) => {
+            const latestTag = latestTagsById.get(tag.id);
+            return latestTag ? [latestTag] : [];
+          }),
+        })));
+        setFilters((currentFilters) => currentFilters.tagId !== 'all' &&
+          !latestTags.some(({ id }) => id === currentFilters.tagId)
+          ? { ...currentFilters, tagId: 'all' }
+          : currentFilters);
+      } catch {
+        return;
+      }
+    }
+
+    window.addEventListener('focus', refreshTags);
+    return () => {
+      active = false;
+      window.removeEventListener('focus', refreshTags);
     };
   }, []);
 
@@ -430,13 +492,132 @@ export default function HomePage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [manageTagsOpen]);
 
-  const priorityFilteredTodos = priorityFilter === 'all'
-    ? todos
-    : todos.filter((todo) => todo.priority === priorityFilter);
-  const visibleTodos = activeTagFilter === null
-    ? priorityFilteredTodos
-    : priorityFilteredTodos.filter((todo) => todo.tags?.some((tag) => tag.id === activeTagFilter));
+  useEffect(() => {
+    if (!saveFilterOpen) {
+      const opener = saveFilterOpenerRef.current;
+      if (!opener) return;
+      const fallback = document.getElementById('todo-search');
+      if (opener?.isConnected) opener.focus();
+      else fallback?.focus();
+      saveFilterOpenerRef.current = null;
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setSaveFilterOpen(false);
+        return;
+      }
+      if (event.key !== 'Tab' || !saveFilterDialogRef.current) return;
+
+      const focusable = Array.from(
+        saveFilterDialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const activeElement = document.activeElement;
+      if (event.shiftKey && (activeElement === first || !saveFilterDialogRef.current.contains(activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (activeElement === last || !saveFilterDialogRef.current.contains(activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [saveFilterOpen]);
+
+  const selectedTagExists = filters.tagId === 'all' || tags.some(({ id }) => id === filters.tagId);
+  const displayedSearch = filters.search === ''
+    ? ''
+    : presetSearchOverride !== null && debouncedSearch !== filters.search
+      ? presetSearchOverride
+      : debouncedSearch;
+  const effectiveFilters: FilterState = {
+    ...filters,
+    search: displayedSearch,
+    tagId: selectedTagExists ? filters.tagId : 'all',
+  };
+  const visibleTodos = applyFilters(todos, effectiveFilters);
+  const filtersActive = hasActiveFilters({ ...filters, tagId: effectiveFilters.tagId });
   const sections = sectionTodos(visibleTodos, now);
+
+  function clearFilters() {
+    setFilters({ ...DEFAULT_FILTER_STATE });
+    setPresetSearchOverride('');
+  }
+
+  function openSaveFilter() {
+    setFilterError(null);
+    setFilterPresetName('');
+    saveFilterOpenerRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    setSaveFilterOpen(true);
+  }
+
+  function saveCurrentFilter(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = filterPresetName.trim();
+    if (!name) return;
+
+    const preset: FilterPreset = {
+      id: crypto.randomUUID(),
+      name,
+      filters: { ...filters, tagId: effectiveFilters.tagId },
+      createdAt: getSingaporeNow().toISOString(),
+    };
+    try {
+      setFilterPresets(savePreset(preset));
+      setSaveFilterOpen(false);
+      setFilterPresetName('');
+    } catch {
+      setFilterError('Could not save preset. Browser storage may be full.');
+    }
+  }
+
+  function applyPreset(preset: FilterPreset) {
+    const presetTagExists = preset.filters.tagId === 'all' || tags.some(({ id }) => id === preset.filters.tagId);
+    setPresetSearchOverride(preset.filters.search);
+    setFilters({
+      ...DEFAULT_FILTER_STATE,
+      ...preset.filters,
+      tagId: presetTagExists ? preset.filters.tagId : 'all',
+    });
+
+    void fetchCurrentTags().then((latestTags) => {
+      if (!latestTags) return;
+      const latestTagsById = new Map(latestTags.map((tag) => [tag.id, tag]));
+      const latestTagIds = new Set(latestTagsById.keys());
+      setTags(latestTags);
+      setTodos((currentTodos) => currentTodos.map((todo) => ({
+        ...todo,
+        tags: todo.tags?.flatMap((tag) => {
+          const latestTag = latestTagsById.get(tag.id);
+          return latestTag ? [latestTag] : [];
+        }),
+      })));
+      setFilters((currentFilters) => currentFilters.tagId !== 'all' && !latestTagIds.has(currentFilters.tagId)
+        ? { ...currentFilters, tagId: 'all' }
+        : currentFilters);
+    }).catch(() => undefined);
+  }
+
+  function removePreset(preset: FilterPreset) {
+    if (!window.confirm(`Delete preset "${preset.name}"?`)) return;
+    try {
+      setFilterPresets(deletePreset(preset.id));
+      setFilterError(null);
+    } catch {
+      setFilterError('Could not delete the saved preset.');
+    }
+  }
 
   function openManageTags() {
     setError(null);
@@ -525,7 +706,9 @@ export default function HomePage() {
       })));
       setSelectedTagIds((currentIds) => currentIds.filter((id) => id !== tag.id));
       setEditTagIds((currentIds) => currentIds.filter((id) => id !== tag.id));
-      if (activeTagFilter === tag.id) setActiveTagFilter(null);
+      setFilters((currentFilters) => currentFilters.tagId === tag.id
+        ? { ...currentFilters, tagId: 'all' }
+        : currentFilters);
       if (editingTagId === tag.id) setEditingTagId(null);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Could not delete tag.');
@@ -765,7 +948,7 @@ export default function HomePage() {
           onToggle={toggleTodo}
           onEdit={openEditor}
           onDelete={deleteTodo}
-          onFilterByTag={setActiveTagFilter}
+          onFilterByTag={(tagId) => setFilters((currentFilters) => ({ ...currentFilters, tagId }))}
           onSubtaskMutation={mutateSubtask}
         />
       </section>
@@ -789,20 +972,133 @@ export default function HomePage() {
         <p className="home-eyebrow">Personal workspace</p>
         <h1>{user ? `Welcome, ${user.username}.` : 'Your day'}</h1>
 
-        <div className="todo-list-toolbar">
-          <label className="tag-filter">
-            <span>Filter by tag</span>
+        <div className="search-filter-toolbar">
+          <SearchBar
+            value={filters.search}
+            onChange={(search) => {
+              setPresetSearchOverride(displayedSearch);
+              setFilters((currentFilters) => ({ ...currentFilters, search }));
+            }}
+          />
+          <label className="quick-filter">
+            <span className="field-label">Priority</span>
             <select
-              aria-label="Filter by tag"
+              aria-label="Filter by priority"
               className="text-input"
-              onChange={(event) => setActiveTagFilter(event.target.value ? Number(event.target.value) : null)}
-              value={activeTagFilter ?? ''}
+              value={filters.priority}
+              onChange={(event) => setFilters((currentFilters) => ({
+                ...currentFilters,
+                priority: event.target.value as FilterState['priority'],
+              }))}
             >
-              <option value="">All Tags</option>
-              {tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+              <option value="all">All Priorities</option>
+              <option value="high">High Priority</option>
+              <option value="medium">Medium Priority</option>
+              <option value="low">Low Priority</option>
             </select>
           </label>
+          {tags.length > 0 && (
+            <label className="quick-filter">
+              <span className="field-label">Tag</span>
+              <select
+                aria-label="Filter by tag"
+                className="text-input"
+                value={effectiveFilters.tagId === 'all' ? '' : effectiveFilters.tagId}
+                onChange={(event) => setFilters((currentFilters) => ({
+                  ...currentFilters,
+                  tagId: event.target.value ? Number(event.target.value) : 'all',
+                }))}
+              >
+                <option value="">All Tags</option>
+                {tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+              </select>
+            </label>
+          )}
+          <button
+            className={`advanced-filter-toggle${advancedFiltersOpen ? ' is-active' : ''}`}
+            type="button"
+            aria-expanded={advancedFiltersOpen}
+            onClick={() => setAdvancedFiltersOpen((open) => !open)}
+          >
+            {advancedFiltersOpen ? '▼ Advanced' : '▶ Advanced'}
+          </button>
+          {filtersActive && (
+            <div className="filter-actions">
+              <button type="button" className="clear-filters-action" onClick={clearFilters}>
+                <X size={15} aria-hidden="true" /> Clear All
+              </button>
+              <button type="button" className="save-filter-action" onClick={openSaveFilter}>
+                <Save size={15} aria-hidden="true" /> Save Filter
+              </button>
+            </div>
+          )}
         </div>
+
+        {advancedFiltersOpen && (
+          <section className="advanced-filter-panel" aria-label="Advanced filters">
+            <div className="advanced-filter-fields">
+              <label>
+                <span className="field-label">Completion</span>
+                <select
+                  aria-label="Completion status"
+                  className="text-input"
+                  value={filters.completion}
+                  onChange={(event) => setFilters((currentFilters) => ({
+                    ...currentFilters,
+                    completion: event.target.value as FilterState['completion'],
+                  }))}
+                >
+                  <option value="all">All Todos</option>
+                  <option value="incomplete">Incomplete Only</option>
+                  <option value="completed">Completed Only</option>
+                </select>
+              </label>
+              <label>
+                <span className="field-label">Due Date From</span>
+                <input
+                  aria-label="Due date from"
+                  className="text-input"
+                  type="date"
+                  value={filters.dueDateFrom ?? ''}
+                  onChange={(event) => setFilters((currentFilters) => ({
+                    ...currentFilters,
+                    dueDateFrom: event.target.value || null,
+                  }))}
+                />
+              </label>
+              <label>
+                <span className="field-label">Due Date To</span>
+                <input
+                  aria-label="Due date to"
+                  className="text-input"
+                  type="date"
+                  value={filters.dueDateTo ?? ''}
+                  onChange={(event) => setFilters((currentFilters) => ({
+                    ...currentFilters,
+                    dueDateTo: event.target.value || null,
+                  }))}
+                />
+              </label>
+            </div>
+            {presetsLoaded && filterPresets.length > 0 && (
+              <div className="filter-preset-list" aria-label="Saved filters">
+                {filterPresets.map((preset) => (
+                  <span className="filter-preset-pill" key={preset.id}>
+                    <button type="button" onClick={() => applyPreset(preset)}>{preset.name}</button>
+                    <button
+                      type="button"
+                      aria-label={`Delete preset ${preset.name}`}
+                      onClick={() => removePreset(preset)}
+                    >
+                      <X size={13} aria-hidden="true" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {filterError && <p className="auth-error" role="alert">{filterError}</p>}
+          </section>
+        )}
 
         <form className="todo-create-form" onSubmit={addTodo}>
           <label className="todo-title-field">
@@ -857,29 +1153,13 @@ export default function HomePage() {
           </div>
         </form>
 
-        <div className="todo-filter-bar">
-          <label>
-            <span className="field-label">Filter by priority</span>
-            <select
-              className="text-input"
-              value={priorityFilter}
-              onChange={(event) => setPriorityFilter(event.target.value as Priority | 'all')}
-            >
-              <option value="all">All Priorities</option>
-              <option value="high">High Priority</option>
-              <option value="medium">Medium Priority</option>
-              <option value="low">Low Priority</option>
-            </select>
-          </label>
-        </div>
-
         {error && !manageTagsOpen && <p className="auth-error todo-error" role="alert">{error}</p>}
         {isLoading ? (
           <p className="empty-state" role="status">Loading todos…</p>
         ) : todos.length === 0 ? (
           <p className="empty-state">No todos yet.</p>
         ) : visibleTodos.length === 0 ? (
-          <p className="empty-state" role="status">No todos match the selected filters.</p>
+          <p className="empty-state" role="status">No todos match your filters.</p>
         ) : (
           <div className="todo-sections" aria-live="polite">
             {renderSection('Overdue', sections.overdue, 'overdue-section')}
@@ -1030,6 +1310,60 @@ export default function HomePage() {
         </div>
       )}
 
+      {saveFilterOpen && (
+        <div
+          className="todo-dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setSaveFilterOpen(false);
+          }}
+        >
+          <section
+            className="todo-dialog filter-save-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="save-filter-heading"
+            ref={saveFilterDialogRef}
+          >
+            <div className="todo-dialog-header">
+              <h2 id="save-filter-heading">Save filter</h2>
+              <button
+                className="icon-action"
+                type="button"
+                aria-label="Close save filter dialog"
+                onClick={() => setSaveFilterOpen(false)}
+              >
+                <X size={19} aria-hidden="true" />
+              </button>
+            </div>
+            <form onSubmit={saveCurrentFilter}>
+              <p className="filter-preview" data-testid="filter-preview">
+                {describeFilters({ ...filters, tagId: effectiveFilters.tagId }, tags)}
+              </p>
+              <label>
+                <span className="field-label">Preset name</span>
+                <input
+                  aria-label="Preset name"
+                  className="text-input"
+                  autoFocus
+                  maxLength={60}
+                  value={filterPresetName}
+                  onChange={(event) => setFilterPresetName(event.target.value)}
+                />
+              </label>
+              {filterError && <p className="auth-error" role="alert">{filterError}</p>}
+              <div className="todo-dialog-actions">
+                <button className="secondary-action" type="button" onClick={() => setSaveFilterOpen(false)}>
+                  Cancel
+                </button>
+                <button className="primary-action" type="submit" disabled={!filterPresetName.trim()}>
+                  Save preset
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
       {editingTodo && (
         <div
           className="todo-dialog-backdrop"
@@ -1166,5 +1500,44 @@ function NotificationToggle() {
     >
       <Bell size={17} aria-hidden="true" /> {label}
     </button>
+  );
+}
+
+function describeFilters(filters: FilterState, tags: Tag[]): string {
+  const descriptions: string[] = [];
+  if (filters.search.trim()) descriptions.push(`Search: "${filters.search.trim()}"`);
+  if (filters.priority !== 'all') descriptions.push(`Priority: ${filters.priority[0].toUpperCase()}${filters.priority.slice(1)}`);
+  if (filters.tagId !== 'all') {
+    const tag = tags.find(({ id }) => id === filters.tagId);
+    if (tag) descriptions.push(`Tag: ${tag.name}`);
+  }
+  if (filters.completion !== 'all') {
+    descriptions.push(`Completion: ${filters.completion === 'incomplete' ? 'Incomplete' : 'Completed'}`);
+  }
+  if (filters.dueDateFrom || filters.dueDateTo) {
+    descriptions.push(`Date: ${filters.dueDateFrom ?? 'any'} to ${filters.dueDateTo ?? 'any'}`);
+  }
+  return descriptions.join(' · ');
+}
+
+function SearchBar({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="todo-search">
+      <Search size={17} aria-hidden="true" />
+      <input
+        id="todo-search"
+        aria-label="Search todos and subtasks"
+        autoComplete="off"
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="Search todos and subtasks..."
+        role="searchbox"
+        value={value}
+      />
+      {value && (
+        <button type="button" aria-label="Clear search" onClick={() => onChange('')}>
+          <X size={16} aria-hidden="true" />
+        </button>
+      )}
+    </div>
   );
 }
