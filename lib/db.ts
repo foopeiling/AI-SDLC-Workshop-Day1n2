@@ -865,3 +865,18 @@ export const { userDB, authenticatorDB, challengeDB, rateLimitDB } = createAuthR
 export const todoDB = createTodoRepository(db);
 export const tagDB = createTagRepository(db);
 export const subtaskDB = createSubtaskRepository(db);
+
+export function createHolidayRepository(database: AppDatabase) {
+  return {
+    findAll(): Holiday[] {
+      return database.prepare<[], Holiday>('SELECT id, date, name FROM holidays ORDER BY date').all();
+    },
+    findByRange(start: string, end: string): Holiday[] {
+      return database.prepare<[string, string], Holiday>(
+        'SELECT id, date, name FROM holidays WHERE date >= ? AND date <= ? ORDER BY date',
+      ).all(start, end);
+    },
+  };
+}
+
+export const holidayDB = createHolidayRepository(db);

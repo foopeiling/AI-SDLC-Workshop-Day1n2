@@ -2,8 +2,8 @@
 
 import { Bell, CalendarClock, Check, Download, FileSpreadsheet, Pencil, Plus, Tag as TagIcon, Trash2, Upload, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { AccountActions } from '@/components/account-actions';
 import Link from 'next/link';
+import { AccountActions } from '@/components/account-actions';
 import type { Priority, ReminderMinutes, Subtask, Todo, UpdateTodoInput } from '@/lib/db';
 import type { CreateTagInput, Tag, UpdateTagInput } from '@/lib/db';
 import { REMINDER_LABELS } from '@/lib/reminders';
@@ -879,6 +879,7 @@ export default function HomePage() {
               </p>
             )}
           </div>
+          <Link className="calendar-link" href="/calendar">Calendar</Link>
           <NotificationToggle />
           <AccountActions />
         </div>
