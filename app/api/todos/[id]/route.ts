@@ -1,8 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
-import { PRIORITY_VALUES, todoDB } from '@/lib/db';
+import { PRIORITY_VALUES, RecurrenceValidationError, todoDB } from '@/lib/db';
 import { readJsonBody } from '@/lib/auth-validation';
+import { RECURRENCE_PATTERNS, validateRecurrence } from '@/lib/recurrence';
 import { getSingaporeNow } from '@/lib/timezone';
 import { normalizeDueDate } from '@/lib/todo-utils';
 import { authorizeTodoRequest } from '@/lib/todo-api-guard';
@@ -21,7 +22,7 @@ const updateTodoSchema = z.object({
   priority: prioritySchema.optional(),
   completed: z.boolean().optional(),
   is_recurring: z.boolean().optional(),
-  recurrence_pattern: z.enum(['daily', 'weekly', 'monthly', 'yearly']).nullable().optional(),
+  recurrence_pattern: z.enum(RECURRENCE_PATTERNS, { error: 'Invalid recurrence pattern' }).nullable().optional(),
   reminder_minutes: reminderMinutesSchema.nullable().optional(),
   last_notification_sent: z.string().datetime({ offset: true }).optional(),
   expected_due_date: z.string().datetime({ offset: true }).optional(),
@@ -115,19 +116,45 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: 'A due date is required for a reminder.' }, { status: 400 });
   }
 
+  const touchesRecurrence = 'is_recurring' in parsed.data ||
+    'recurrence_pattern' in parsed.data ||
+    'due_date' in parsed.data;
+  const nextIsRecurring = 'is_recurring' in parsed.data
+    ? parsed.data.is_recurring ?? false
+    : existingTodo.is_recurring;
+  const nextPattern = 'recurrence_pattern' in parsed.data
+    ? parsed.data.recurrence_pattern
+    : existingTodo.recurrence_pattern;
+  if (touchesRecurrence) {
+    const recurrenceError = validateRecurrence({
+      isRecurring: nextIsRecurring,
+      pattern: nextPattern,
+      dueDate: nextDueDate,
+    });
+    if (recurrenceError) return NextResponse.json({ error: recurrenceError }, { status: 400 });
+  }
+
   const update = {
     ...parsed.data,
     ...('due_date' in parsed.data ? { due_date: dueDate } : {}),
     ...('due_date' in parsed.data && nextDueDate === null && !('reminder_minutes' in parsed.data)
       ? { reminder_minutes: null }
       : {}),
+    ...(!nextIsRecurring && ('is_recurring' in parsed.data || 'recurrence_pattern' in parsed.data)
+      ? { recurrence_pattern: null }
+      : {}),
   };
 
   try {
-    const todo = todoDB.updateForUser(id, session.userId, update);
-    if (!todo) return NextResponse.json({ error: 'Todo not found' }, { status: 404 });
-    return NextResponse.json(todo);
-  } catch {
+    const result = todoDB.updateWithRecurrence(id, session.userId, update);
+    if (!result) return NextResponse.json({ error: 'Todo not found' }, { status: 404 });
+    return NextResponse.json(
+      result.nextInstance ? { ...result.todo, next_instance: result.nextInstance } : result.todo,
+    );
+  } catch (error) {
+    if (error instanceof RecurrenceValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json({ error: 'Todo could not be updated.' }, { status: 400 });
   }
 }

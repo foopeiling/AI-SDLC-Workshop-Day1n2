@@ -2,12 +2,15 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Priority } from './priority';
+import { calculateNextDueDate, validateRecurrence, type RecurrencePattern } from './recurrence';
 import type { ReminderMinutes } from './reminders';
 
 export { PRIORITY_ORDER, PRIORITY_VALUES } from './priority';
 export type { Priority } from './priority';
+export type { RecurrencePattern } from './recurrence';
 
-export type RecurrencePattern = 'daily' | 'weekly' | 'monthly' | 'yearly';
+export class RecurrenceValidationError extends Error {}
+
 export type ChallengeCeremony = 'registration' | 'login' | 'passkey-registration';
 export type { ReminderMinutes } from './reminders';
 export { REMINDER_LABELS } from './reminders';
@@ -564,6 +567,59 @@ export function createTodoRepository(database: AppDatabase) {
         .prepare('SELECT * FROM todos WHERE id = ? AND user_id = ?')
         .get(todoId, userId) as StoredTodo | undefined;
       return row ? hydrateTodos([row])[0] : null;
+    },
+    // The immediate transaction serialises writers, so concurrent completions cannot spawn two instances.
+    updateWithRecurrence(
+      todoId: number,
+      userId: number,
+      input: UpdateTodoInput,
+    ): { todo: Todo; nextInstance: Todo | null } | null {
+      const run = database.transaction(() => {
+        const before = todoDB.findByIdForUser(todoId, userId);
+        if (!before) return null;
+        const todo = todoDB.updateForUser(todoId, userId, input);
+        if (!todo) return null;
+
+        const touchesRecurrence = 'is_recurring' in input || 'recurrence_pattern' in input || 'due_date' in input;
+        const invalid = touchesRecurrence
+          ? validateRecurrence({
+              isRecurring: todo.is_recurring,
+              pattern: todo.recurrence_pattern,
+              dueDate: todo.due_date,
+            })
+          : null;
+        if (invalid) throw new RecurrenceValidationError(invalid);
+
+        const justCompleted = !before.completed && todo.completed;
+        if (!justCompleted || !todo.is_recurring || !todo.recurrence_pattern || !todo.due_date) {
+          return { todo, nextInstance: null };
+        }
+
+        const nextDueDate = calculateNextDueDate(todo.due_date, todo.recurrence_pattern);
+        // Un-completing and re-completing must not stack a second pending copy of the same occurrence.
+        const alreadyScheduled = database
+          .prepare(
+            `SELECT 1 FROM todos
+             WHERE user_id = ? AND title = ? AND completed = 0
+               AND recurrence_pattern = ? AND due_date = ?`,
+          )
+          .get(userId, todo.title, todo.recurrence_pattern, nextDueDate);
+        if (alreadyScheduled) return { todo, nextInstance: null };
+
+        const nextInstance = todoDB.create({
+          user_id: userId,
+          title: todo.title,
+          priority: todo.priority,
+          is_recurring: true,
+          recurrence_pattern: todo.recurrence_pattern,
+          reminder_minutes: todo.reminder_minutes,
+          due_date: nextDueDate,
+          tag_ids: (todo.tags ?? []).map((tag) => tag.id),
+        });
+        return { todo, nextInstance };
+      });
+
+      return run.immediate();
     },
     updateForUser(todoId: number, userId: number, input: UpdateTodoInput): Todo | null {
       const columns: Record<keyof UpdateTodoInput, string> = {
