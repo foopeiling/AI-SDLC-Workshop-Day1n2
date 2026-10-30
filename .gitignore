@@ -1,5 +1,8 @@
 node_modules/
 .next/
+.next-preview/
+.next-playwright/
+.next-playwright-*/
 coverage/
 playwright-report/
 test-results/

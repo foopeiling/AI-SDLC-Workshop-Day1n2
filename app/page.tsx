@@ -1,15 +1,16 @@
 'use client';
 
-import { Bell, CalendarClock, Check, Download, FileSpreadsheet, Pencil, Plus, Tag as TagIcon, Trash2, Upload, X } from 'lucide-react';
+import { Bell, BookmarkPlus, CalendarClock, Check, Download, FileSpreadsheet, Library, Pencil, Plus, Tag as TagIcon, Trash2, Upload, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { AccountActions } from '@/components/account-actions';
-import type { Priority, ReminderMinutes, Subtask, Todo, UpdateTodoInput } from '@/lib/db';
-import type { CreateTagInput, Tag, UpdateTagInput } from '@/lib/db';
+import type { CreateTagInput, Tag, Template, UpdateTagInput } from '@/lib/db';
+import type { Priority, RecurrencePattern, ReminderMinutes, Subtask, Todo, UpdateTodoInput } from '@/lib/db';
 import { REMINDER_LABELS } from '@/lib/reminders';
 import { useNotifications } from '@/lib/hooks/useNotifications';
 import { calculateProgress } from '@/lib/subtask-utils';
-import { formatSingaporeDateTime, formatSingaporeInput, getSingaporeNow } from '@/lib/timezone';
+import { parseTemplateSubtasks } from '@/lib/template-utils';
+import { formatSingaporeDateTime, formatSingaporeInput, getSingaporeNow, parseSingaporeDateTime } from '@/lib/timezone';
 import { normalizeDueDate, sectionTodos } from '@/lib/todo-utils';
 
 interface FormValues {
@@ -17,6 +18,8 @@ interface FormValues {
   dueDate: string;
   priority: Priority;
   reminderMinutes: ReminderMinutes | null;
+  isRecurring: boolean;
+  recurrencePattern: RecurrencePattern;
 }
 
 interface ApiError {
@@ -211,6 +214,15 @@ function TodoRows({
             <span className={todo.completed ? 'todo-title is-complete' : 'todo-title'}>{todo.title}</span>
             <span className="todo-meta">
               <span className={`priority-label priority-${todo.priority}`}>{todo.priority}</span>
+              {todo.is_recurring && todo.recurrence_pattern && (
+                <span
+                  className="recurrence-badge"
+                  data-testid="recurrence-badge"
+                  aria-label={`Repeats ${todo.recurrence_pattern}`}
+                >
+                  <span aria-hidden="true">🔄</span> {todo.recurrence_pattern}
+                </span>
+              )}
               {todo.reminder_minutes !== null && (
                 <span className="reminder-badge" aria-label={`Reminder ${REMINDER_LABELS[todo.reminder_minutes]} before due time`}>
                   <Bell size={13} aria-hidden="true" /> {REMINDER_LABELS[todo.reminder_minutes]}
@@ -274,6 +286,7 @@ function TodoRows({
 export default function HomePage() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
   const [user, setUser] = useState<{ userId: number; username: string } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -285,20 +298,37 @@ export default function HomePage() {
   const [priorityFilter, setPriorityFilter] = useState<Priority | 'all'>('all');
   const [dueDate, setDueDate] = useState('');
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
+  const [draftSubtasks, setDraftSubtasks] = useState<string[]>([]);
+  const [newDraftSubtask, setNewDraftSubtask] = useState('');
   const [reminderMinutes, setReminderMinutes] = useState<ReminderMinutes | null>(null);
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurrencePattern, setRecurrencePattern] = useState<RecurrencePattern>('weekly');
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
   const [editValues, setEditValues] = useState<FormValues>({
     title: '',
     dueDate: '',
     priority: 'medium',
     reminderMinutes: null,
+    isRecurring: false,
+    recurrencePattern: 'weekly',
   });
   const [editTagIds, setEditTagIds] = useState<number[]>([]);
   const [activeTagFilter, setActiveTagFilter] = useState<number | null>(null);
   const [manageTagsOpen, setManageTagsOpen] = useState(false);
+  const [templateDialog, setTemplateDialog] = useState<'save' | 'manage' | null>(null);
+  const [templateName, setTemplateName] = useState('');
+  const [templateDescription, setTemplateDescription] = useState('');
+  const [templateCategory, setTemplateCategory] = useState('');
+  const [templateOffsetMinutes, setTemplateOffsetMinutes] = useState('');
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+  const [usingTemplateId, setUsingTemplateId] = useState<number | null>(null);
+  const [quickTemplateId, setQuickTemplateId] = useState('');
+  const [templateStatus, setTemplateStatus] = useState<string | null>(null);
+  const [templateLoadError, setTemplateLoadError] = useState<string | null>(null);
   const [editingTagId, setEditingTagId] = useState<number | null>(null);
   const [newTagName, setNewTagName] = useState('');
   const [newTagColor, setNewTagColor] = useState('#3B82F6');
+  const [isCreatingTag, setIsCreatingTag] = useState(false);
   const [editTagValues, setEditTagValues] = useState({ name: '', color: '#3B82F6' });
   const [now, setNow] = useState(() => getSingaporeNow());
   const [pendingTodoIds, setPendingTodoIds] = useState<Set<number>>(() => new Set());
@@ -308,6 +338,9 @@ export default function HomePage() {
   const manageTagsDialogRef = useRef<HTMLElement | null>(null);
   const manageTagsOpenerRef = useRef<HTMLElement | null>(null);
   const importFileRef = useRef<HTMLInputElement | null>(null);
+  const templateDialogRef = useRef<HTMLElement | null>(null);
+  const templateDialogOpenerRef = useRef<HTMLElement | null>(null);
+  const creatingTagRef = useRef(false);
 
   function beginTodoMutation(todoId: number): boolean {
     if (pendingTodoIdsRef.current.has(todoId)) return false;
@@ -329,6 +362,25 @@ export default function HomePage() {
     let active = true;
 
     async function loadTodos() {
+      void fetch('/api/templates')
+        .then(async (response) => {
+          if (!response.ok) throw new Error(await getApiError(response));
+          return await response.json() as Template[];
+        })
+        .then((loadedTemplates) => {
+          if (active) {
+            setTemplates(loadedTemplates);
+            setTemplateLoadError(null);
+          }
+        })
+        .catch((caughtError: unknown) => {
+          if (active) {
+            setTemplateLoadError(caughtError instanceof Error
+              ? caughtError.message
+              : 'Could not load templates.');
+          }
+        });
+
       try {
         const [todoResponse, userResponse, tagResponse] = await Promise.all([
           fetch('/api/todos'),
@@ -439,6 +491,50 @@ export default function HomePage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [manageTagsOpen]);
 
+  useEffect(() => {
+    if (!templateDialog) {
+      templateDialogOpenerRef.current?.focus();
+      templateDialogOpenerRef.current = null;
+      return;
+    }
+
+    const initialFocus = templateDialog === 'save'
+      ? templateDialogRef.current?.querySelector<HTMLElement>('[aria-label="Template name"]')
+      : templateDialogRef.current?.querySelector<HTMLElement>(
+          '.template-card-actions button:not([disabled])',
+        ) ?? templateDialogRef.current?.querySelector<HTMLElement>('#template-dialog-heading');
+    initialFocus?.focus();
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setTemplateDialog(null);
+        return;
+      }
+
+      if (event.key !== 'Tab' || !templateDialogRef.current) return;
+      const focusable = Array.from(
+        templateDialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const activeElement = document.activeElement;
+      if (event.shiftKey && (activeElement === first || !templateDialogRef.current.contains(activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (activeElement === last || !templateDialogRef.current.contains(activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [templateDialog]);
+
   const priorityFilteredTodos = priorityFilter === 'all'
     ? todos
     : todos.filter((todo) => todo.priority === priorityFilter);
@@ -455,6 +551,128 @@ export default function HomePage() {
     setManageTagsOpen(true);
   }
 
+  function openTemplateDialog(mode: 'save' | 'manage') {
+    setError(null);
+    setTemplateStatus(null);
+    templateDialogOpenerRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+
+    if (mode === 'save') {
+      setTemplateName('');
+      setTemplateDescription('');
+      setTemplateCategory('');
+      if (dueDate) {
+        const dueInstant = parseSingaporeDateTime(dueDate);
+        const currentInstant = getSingaporeNow();
+        if (!dueInstant || dueInstant.getTime() < currentInstant.getTime() + 60_000) {
+          setError('Set a valid future due date before saving a relative offset.');
+          return;
+        }
+        setTemplateOffsetMinutes(String(Math.max(
+          1,
+          Math.ceil((dueInstant.getTime() - currentInstant.getTime()) / 60_000),
+        )));
+      } else {
+        setTemplateOffsetMinutes('');
+      }
+    }
+
+    setTemplateDialog(mode);
+  }
+
+  async function saveTemplate(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!templateName.trim() || !title.trim()) return;
+
+    const dueDateOffsetMinutes = templateOffsetMinutes.trim()
+      ? Number(templateOffsetMinutes)
+      : null;
+    if (
+      dueDateOffsetMinutes !== null &&
+      (!Number.isSafeInteger(dueDateOffsetMinutes) || dueDateOffsetMinutes < 1)
+    ) {
+      setError('Due date offset must be a positive number of minutes.');
+      return;
+    }
+
+    setIsSavingTemplate(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: templateName.trim(),
+          description: templateDescription.trim() || undefined,
+          category: templateCategory.trim() || undefined,
+          title_template: title.trim(),
+          priority,
+          is_recurring: isRecurring,
+          recurrence_pattern: isRecurring ? recurrencePattern : undefined,
+          reminder_minutes: reminderMinutes ?? undefined,
+          due_date_offset_minutes: dueDateOffsetMinutes ?? undefined,
+          subtasks: draftSubtasks.map((subtaskTitle, position) => ({
+            title: subtaskTitle,
+            position,
+          })),
+        }),
+      });
+      if (!response.ok) throw new Error(await getApiError(response));
+      const savedTemplate = (await response.json()) as Template;
+      setTemplates((currentTemplates) => [savedTemplate, ...currentTemplates]);
+      setTemplateDialog(null);
+      setTemplateStatus('Template saved.');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Could not save template.');
+    } finally {
+      setIsSavingTemplate(false);
+    }
+  }
+
+  async function createTodoFromTemplate(templateId: number, closeManager: boolean) {
+    if (usingTemplateId !== null) return;
+    setUsingTemplateId(templateId);
+    setError(null);
+    setTemplateStatus(null);
+    try {
+      const response = await fetch(`/api/templates/${templateId}/use`, { method: 'POST' });
+      if (!response.ok) throw new Error(await getApiError(response));
+      const createdTodo = (await response.json()) as Todo;
+      setTodos((currentTodos) => [createdTodo, ...currentTodos]);
+      setNow(getSingaporeNow());
+      setQuickTemplateId('');
+      if (closeManager) setTemplateDialog(null);
+      setTemplateStatus(`Created "${createdTodo.title}" from template.`);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Could not use template.');
+    } finally {
+      setUsingTemplateId(null);
+    }
+  }
+
+  async function deleteTemplate(template: Template) {
+    if (!window.confirm(`Delete template "${template.name}"?`)) return;
+
+    setError(null);
+    try {
+      const response = await fetch(`/api/templates/${template.id}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error(await getApiError(response));
+      setTemplates((currentTemplates) => currentTemplates.filter((item) => item.id !== template.id));
+      if (quickTemplateId === String(template.id)) setQuickTemplateId('');
+      setTemplateStatus('Template deleted. Existing todos were not changed.');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Could not delete template.');
+    }
+  }
+
+  function addDraftSubtask() {
+    const subtaskTitle = newDraftSubtask.trim();
+    if (!subtaskTitle) return;
+    setDraftSubtasks((currentSubtasks) => [...currentSubtasks, subtaskTitle]);
+    setNewDraftSubtask('');
+  }
+
   function toggleSelectedTag(
     tagId: number,
     selectedIds: number[],
@@ -467,9 +685,13 @@ export default function HomePage() {
 
   async function createTag(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const input: CreateTagInput = { name: newTagName.trim(), color: newTagColor };
+    if (creatingTagRef.current) return;
+    const submittedName = newTagName;
+    const input: CreateTagInput = { name: submittedName.trim(), color: newTagColor };
     if (!input.name) return;
 
+    creatingTagRef.current = true;
+    setIsCreatingTag(true);
     setError(null);
     try {
       const response = await fetch('/api/tags', {
@@ -481,10 +703,13 @@ export default function HomePage() {
       const tag = (await response.json()) as Tag;
       setTags((currentTags) => [...currentTags, tag]
         .sort((first, second) => first.name.localeCompare(second.name)));
-      setNewTagName('');
-      setNewTagColor('#3B82F6');
+      setNewTagName((currentName) => currentName === submittedName ? '' : currentName);
+      setNewTagColor((currentColor) => currentColor === input.color ? '#3B82F6' : currentColor);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Could not create tag.');
+    } finally {
+      creatingTagRef.current = false;
+      setIsCreatingTag(false);
     }
   }
 
@@ -613,13 +838,20 @@ export default function HomePage() {
       completed: false,
       due_date: normalizedDueDate.value,
       priority,
-      is_recurring: false,
-      recurrence_pattern: null,
+      is_recurring: isRecurring,
+      recurrence_pattern: isRecurring ? recurrencePattern : null,
       reminder_minutes: reminderMinutes,
       last_notification_sent: null,
       created_at: getSingaporeNow().toISOString(),
       updated_at: null,
-      subtasks: [],
+      subtasks: draftSubtasks.map((subtaskTitle, position) => ({
+        id: temporaryId - position - 1,
+        todo_id: temporaryId,
+        title: subtaskTitle,
+        completed: false,
+        position,
+        created_at: getSingaporeNow().toISOString(),
+      })),
       tags: tags.filter((tag) => selectedTagIds.includes(tag.id)),
     };
     setTodos((currentTodos) => [...currentTodos, optimisticTodo]);
@@ -628,6 +860,10 @@ export default function HomePage() {
     setDueDate('');
     setSelectedTagIds([]);
     setReminderMinutes(null);
+    setIsRecurring(false);
+    setRecurrencePattern('weekly');
+    setDraftSubtasks([]);
+    setNewDraftSubtask('');
 
     try {
       const response = await fetch('/api/todos', {
@@ -639,6 +875,9 @@ export default function HomePage() {
           priority,
           tag_ids: selectedTagIds,
           reminder_minutes: reminderMinutes,
+          is_recurring: isRecurring,
+          recurrence_pattern: isRecurring ? recurrencePattern : null,
+          subtasks: draftSubtasks.map((subtaskTitle) => ({ title: subtaskTitle })),
         }),
       });
       if (!response.ok) throw new Error(await getApiError(response));
@@ -667,8 +906,13 @@ export default function HomePage() {
         body: JSON.stringify({ completed }),
       });
       if (!response.ok) throw new Error(await getApiError(response));
-      const savedTodo = (await response.json()) as Todo;
-      setTodos((currentTodos) => currentTodos.map((item) => item.id === todo.id ? savedTodo : item));
+      const { next_instance: nextInstance, ...savedTodo } = (await response.json()) as Todo & { next_instance?: Todo };
+      setTodos((currentTodos) => {
+        const updated = currentTodos.map((item) => item.id === todo.id ? savedTodo : item);
+        return nextInstance && !updated.some((item) => item.id === nextInstance.id)
+          ? [...updated, nextInstance]
+          : updated;
+      });
     } catch (caughtError) {
       setTodos((currentTodos) => currentTodos.map((item) => item.id === todo.id ? todo : item));
       setError(caughtError instanceof Error ? caughtError.message : 'Could not update todo.');
@@ -688,6 +932,8 @@ export default function HomePage() {
       dueDate: todo.due_date ? formatSingaporeInput(todo.due_date) : '',
       priority: todo.priority,
       reminderMinutes: todo.reminder_minutes,
+      isRecurring: todo.is_recurring,
+      recurrencePattern: todo.recurrence_pattern ?? 'weekly',
     });
     setEditTagIds(todo.tags?.map((tag) => tag.id) ?? []);
   }
@@ -716,6 +962,8 @@ export default function HomePage() {
       priority: editValues.priority,
       tag_ids: editTagIds,
       reminder_minutes: editValues.reminderMinutes,
+      is_recurring: editValues.isRecurring,
+      recurrence_pattern: editValues.isRecurring ? editValues.recurrencePattern : null,
       ...(dueDateChanged ? { due_date: normalizedDueDate } : {}),
     };
     if (!beginTodoMutation(previousTodo.id)) return;
@@ -725,6 +973,8 @@ export default function HomePage() {
       due_date: dueDateChanged ? normalizedDueDate ?? null : previousTodo.due_date,
       tags: tags.filter((tag) => editTagIds.includes(tag.id)),
       reminder_minutes: editValues.reminderMinutes,
+      is_recurring: editValues.isRecurring,
+      recurrence_pattern: editValues.isRecurring ? editValues.recurrencePattern : null,
     };
     setTodos((currentTodos) => currentTodos.map((todo) => todo.id === previousTodo.id ? optimisticTodo : todo));
     setError(null);
@@ -881,6 +1131,9 @@ export default function HomePage() {
           </div>
           <Link className="calendar-link" href="/calendar">Calendar</Link>
           <NotificationToggle />
+          <button className="secondary-action" type="button" onClick={() => openTemplateDialog('manage')}>
+            <Library size={17} aria-hidden="true" /> Templates
+          </button>
           <AccountActions />
         </div>
       </header>
@@ -900,6 +1153,27 @@ export default function HomePage() {
             >
               <option value="">All Tags</option>
               {tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+            </select>
+          </label>
+          <label className="quick-template-control">
+            <span>Use Template</span>
+            <select
+              aria-label="Use template"
+              className="text-input"
+              value={quickTemplateId}
+              disabled={templates.length === 0 || usingTemplateId !== null}
+              onChange={(event) => {
+                const templateId = Number(event.target.value);
+                setQuickTemplateId('');
+                if (templateId) void createTodoFromTemplate(templateId, false);
+              }}
+            >
+              <option value="">Use Template</option>
+              {templates.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.category ? `${template.name} (${template.category})` : template.name}
+                </option>
+              ))}
             </select>
           </label>
         </div>
@@ -931,7 +1205,10 @@ export default function HomePage() {
               value={dueDate}
               onChange={(event) => {
                 setDueDate(event.target.value);
-                if (!event.target.value) setReminderMinutes(null);
+                if (!event.target.value) {
+                  setReminderMinutes(null);
+                  setIsRecurring(false);
+                }
               }}
             />
           </label>
@@ -941,9 +1218,64 @@ export default function HomePage() {
             value={reminderMinutes}
             onChange={setReminderMinutes}
           />
-          <button className="primary-action add-todo-action" type="submit" disabled={isLoading || isSubmitting || !title.trim()}>
-            <Plus size={18} aria-hidden="true" /> Add todo
-          </button>
+          <RecurrenceFields
+            idPrefix="create"
+            isRecurring={isRecurring}
+            pattern={recurrencePattern}
+            hasDueDate={Boolean(dueDate)}
+            onToggle={setIsRecurring}
+            onPatternChange={setRecurrencePattern}
+          />
+          <div className="draft-subtasks">
+            <span className="field-label">Checklist items</span>
+            {draftSubtasks.length > 0 && (
+              <ul className="draft-subtask-list">
+                {draftSubtasks.map((subtaskTitle, index) => (
+                  <li key={`${index}-${subtaskTitle}`}>
+                    <span>{subtaskTitle}</span>
+                    <button
+                      className="icon-action"
+                      type="button"
+                      aria-label={`Remove checklist item ${subtaskTitle}`}
+                      onClick={() => setDraftSubtasks((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                    ><X size={15} aria-hidden="true" /></button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="draft-subtask-entry">
+              <input
+                className="text-input"
+                aria-label="New checklist item"
+                value={newDraftSubtask}
+                maxLength={500}
+                onChange={(event) => setNewDraftSubtask(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    addDraftSubtask();
+                  }
+                }}
+              />
+              <button
+                className="secondary-action"
+                type="button"
+                aria-label="Add checklist item"
+                disabled={!newDraftSubtask.trim()}
+                onClick={addDraftSubtask}
+              ><Plus size={16} aria-hidden="true" /> Add item</button>
+            </div>
+          </div>
+          <div className="todo-create-actions">
+            {title.trim() && (
+              <button className="secondary-action" type="button" onClick={() => openTemplateDialog('save')}>
+                <BookmarkPlus size={17} aria-hidden="true" /> Save as template
+              </button>
+            )}
+            <button className="primary-action add-todo-action" type="submit" disabled={isLoading || isSubmitting || !title.trim()}>
+              <Plus size={18} aria-hidden="true" /> Add todo
+            </button>
+          </div>
           <div className="todo-tag-controls">
             <TagSelector
               label="Tags"
@@ -973,7 +1305,8 @@ export default function HomePage() {
           </label>
         </div>
 
-        {error && !manageTagsOpen && <p className="auth-error todo-error" role="alert">{error}</p>}
+        {error && !manageTagsOpen && !templateDialog && <p className="auth-error todo-error" role="alert">{error}</p>}
+        {templateStatus && <p className="auth-status" role="status">{templateStatus}</p>}
         {isLoading ? (
           <p className="empty-state" role="status">Loading todos…</p>
         ) : todos.length === 0 ? (
@@ -988,6 +1321,149 @@ export default function HomePage() {
           </div>
         )}
       </section>
+
+      {templateDialog && (
+        <div
+          className="todo-dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setTemplateDialog(null);
+          }}
+        >
+          <section
+            className="todo-dialog template-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="template-dialog-heading"
+            ref={templateDialogRef}
+          >
+            <div className="todo-dialog-header">
+              <h2 id="template-dialog-heading" tabIndex={-1}>
+                {templateDialog === 'save' ? 'Save as template' : 'Templates'}
+              </h2>
+              <button
+                className="icon-action"
+                type="button"
+                title="Close templates"
+                aria-label="Close templates"
+                onClick={() => setTemplateDialog(null)}
+              ><X size={19} aria-hidden="true" /></button>
+            </div>
+
+            {templateDialog === 'save' ? (
+              <form className="template-save-form" onSubmit={saveTemplate}>
+                <label>
+                  <span className="field-label">Template name</span>
+                  <input
+                    className="text-input"
+                    value={templateName}
+                    maxLength={120}
+                    onChange={(event) => setTemplateName(event.target.value)}
+                    autoFocus
+                    required
+                  />
+                </label>
+                <label>
+                  <span className="field-label">Template description</span>
+                  <textarea
+                    className="text-input template-description-input"
+                    value={templateDescription}
+                    maxLength={1000}
+                    onChange={(event) => setTemplateDescription(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span className="field-label">Template category</span>
+                  <input
+                    className="text-input"
+                    list="template-category-suggestions"
+                    value={templateCategory}
+                    maxLength={80}
+                    onChange={(event) => setTemplateCategory(event.target.value)}
+                  />
+                  <datalist id="template-category-suggestions">
+                    <option value="Work" />
+                    <option value="Personal" />
+                    <option value="Finance" />
+                    <option value="Health" />
+                    <option value="Education" />
+                  </datalist>
+                </label>
+                <label>
+                  <span className="field-label">Due date offset in minutes</span>
+                  <input
+                    className="text-input"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={templateOffsetMinutes}
+                    onChange={(event) => setTemplateOffsetMinutes(event.target.value)}
+                  />
+                </label>
+                {error && <p className="auth-error" role="alert">{error}</p>}
+                <div className="todo-dialog-actions">
+                  <button className="secondary-action" type="button" onClick={() => setTemplateDialog(null)}>
+                    Cancel
+                  </button>
+                  <button className="primary-action" type="submit" disabled={isSavingTemplate || !templateName.trim()}>
+                    Save template
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="template-manager">
+                {templates.length === 0 ? (
+                  <p className="empty-state">No templates saved.</p>
+                ) : (
+                  <ul className="template-card-list">
+                    {templates.map((template) => (
+                      <li className="template-card" data-testid="template-card" key={template.id}>
+                        <div className="template-card-heading">
+                          <h3>{template.name}</h3>
+                          {template.category && <span className="template-category">{template.category}</span>}
+                        </div>
+                        {template.description && <p className="template-description">{template.description}</p>}
+                        <div className="template-badges">
+                          <span className={`priority-label priority-${template.priority}`}>{template.priority}</span>
+                          {template.is_recurring && template.recurrence_pattern && (
+                            <span className="template-badge">🔄 {template.recurrence_pattern}</span>
+                          )}
+                          {template.reminder_minutes !== null && (
+                            <span className="template-badge">
+                              <Bell size={13} aria-hidden="true" /> {REMINDER_LABELS[template.reminder_minutes]}
+                            </span>
+                          )}
+                          {template.subtasks_json && (
+                            <span className="template-badge">
+                              {parseTemplateSubtasks(template.subtasks_json).length} checklist items
+                            </span>
+                          )}
+                        </div>
+                        <div className="template-card-actions">
+                          <button
+                            className="primary-action"
+                            type="button"
+                            disabled={usingTemplateId !== null}
+                            aria-label={`Use template ${template.name}`}
+                            onClick={() => void createTodoFromTemplate(template.id, true)}
+                          >Use</button>
+                          <button
+                            className="secondary-action delete-template-action"
+                            type="button"
+                            aria-label={`Delete template ${template.name}`}
+                            onClick={() => void deleteTemplate(template)}
+                          >Delete</button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {templateLoadError && <p className="auth-error" role="alert">{templateLoadError}</p>}
+                {error && <p className="auth-error" role="alert">{error}</p>}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
 
       {manageTagsOpen && (
         <div
@@ -1122,7 +1598,11 @@ export default function HomePage() {
                   onChange={(event) => setNewTagColor(event.target.value)}
                 />
               </label>
-              <button className="primary-action tag-create-action" type="submit" disabled={!newTagName.trim()}>
+              <button
+                className="primary-action tag-create-action"
+                type="submit"
+                disabled={isCreatingTag || !newTagName.trim()}
+              >
                 <Plus size={16} aria-hidden="true" /> Create tag
               </button>
             </form>
@@ -1173,6 +1653,7 @@ export default function HomePage() {
                     ...values,
                     dueDate: event.target.value,
                     reminderMinutes: event.target.value ? values.reminderMinutes : null,
+                    isRecurring: event.target.value ? values.isRecurring : false,
                   }))}
                 />
               </label>
@@ -1188,6 +1669,14 @@ export default function HomePage() {
                 value={editValues.reminderMinutes}
                 onChange={(value) => setEditValues((values) => ({ ...values, reminderMinutes: value }))}
               />
+              <RecurrenceFields
+                idPrefix="edit"
+                isRecurring={editValues.isRecurring}
+                pattern={editValues.recurrencePattern}
+                hasDueDate={Boolean(editValues.dueDate)}
+                onToggle={(checked) => setEditValues((values) => ({ ...values, isRecurring: checked }))}
+                onPatternChange={(pattern) => setEditValues((values) => ({ ...values, recurrencePattern: pattern }))}
+              />
               <div className="todo-dialog-actions">
                 <button className="secondary-action" type="button" onClick={() => setEditingTodo(null)}>Cancel</button>
                 <button
@@ -1201,6 +1690,55 @@ export default function HomePage() {
         </div>
       )}
     </main>
+  );
+}
+
+function RecurrenceFields({
+  idPrefix,
+  isRecurring,
+  pattern,
+  hasDueDate,
+  onToggle,
+  onPatternChange,
+}: {
+  idPrefix: string;
+  isRecurring: boolean;
+  pattern: RecurrencePattern;
+  hasDueDate: boolean;
+  onToggle: (checked: boolean) => void;
+  onPatternChange: (pattern: RecurrencePattern) => void;
+}) {
+  return (
+    <div className="recurrence-fields">
+      <label className="recurrence-toggle">
+        <input
+          type="checkbox"
+          id={`${idPrefix}-repeat`}
+          checked={isRecurring}
+          disabled={!hasDueDate}
+          aria-describedby={hasDueDate ? undefined : `${idPrefix}-repeat-hint`}
+          onChange={(event) => onToggle(event.target.checked)}
+        />
+        <span>Repeat</span>
+      </label>
+      {isRecurring && (
+        <select
+          className="text-input"
+          id={`${idPrefix}-recurrence-pattern`}
+          aria-label={idPrefix === 'edit' ? 'Edit repeat pattern' : 'Repeat pattern'}
+          value={pattern}
+          onChange={(event) => onPatternChange(event.target.value as RecurrencePattern)}
+        >
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+          <option value="monthly">Monthly</option>
+          <option value="yearly">Yearly</option>
+        </select>
+      )}
+      {!hasDueDate && (
+        <span className="recurrence-hint" id={`${idPrefix}-repeat-hint`}>Set a due date to enable repeat</span>
+      )}
+    </div>
   );
 }
 

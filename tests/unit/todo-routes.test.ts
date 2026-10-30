@@ -172,6 +172,36 @@ describe('todo API routes', () => {
     expect(updated).toMatchObject({ title: 'Updated title', priority: 'low', due_date: null });
   });
 
+  it('creates ordered unchecked subtasks from the todo draft', async () => {
+    const request = new NextRequest('http://localhost:3000/api/todos', {
+      method: 'POST',
+      headers: {
+        origin: 'http://localhost:3000',
+        'x-real-ip': '192.0.2.127',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'Onboard a client',
+        subtasks: [
+          { title: 'Gather requirements' },
+          { title: 'Create project' },
+        ],
+      }),
+    });
+    const response = await collectionRoutes.POST(request);
+    const created = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(created.subtasks.map((subtask: { title: string; position: number; completed: boolean }) => ({
+      title: subtask.title,
+      position: subtask.position,
+      completed: subtask.completed,
+    }))).toEqual([
+      { title: 'Gather requirements', position: 0, completed: false },
+      { title: 'Create project', position: 1, completed: false },
+    ]);
+  });
+
   it('creates, replaces, and clears todo tags through the todo routes', async () => {
     const workTag = tagDB.create(aliceId, { name: 'Work' });
     const urgentTag = tagDB.create(aliceId, { name: 'Urgent' });

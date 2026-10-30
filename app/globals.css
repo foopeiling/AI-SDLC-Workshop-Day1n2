@@ -352,6 +352,24 @@ select:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.quick-template-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.quick-template-control .text-input { width: min(280px, 58vw); height: 40px; }
+
 .todo-create-form label,
 .todo-dialog label {
   display: block;
@@ -401,6 +419,51 @@ select:focus-visible {
   gap: 18px;
   min-width: 0;
 }
+
+.draft-subtasks {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.draft-subtask-list {
+  display: grid;
+  gap: 5px;
+  padding: 0;
+  margin: 0 0 9px;
+  list-style: none;
+}
+
+.draft-subtask-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-left: 2px solid var(--mint);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.draft-subtask-entry {
+  display: flex;
+  gap: 8px;
+  max-width: 560px;
+}
+
+.draft-subtask-entry .text-input { min-width: 0; height: 40px; }
+.draft-subtask-entry .secondary-action { flex-shrink: 0; min-height: 40px; }
+
+.todo-create-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.todo-create-actions .add-todo-action { width: auto; margin: 0; }
 
 .tag-selector {
   min-width: 0;
@@ -711,6 +774,46 @@ select:focus-visible {
   font-weight: 650;
 }
 
+.recurrence-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 23px;
+  padding: 2px 8px;
+  border: 1px solid #d8b4fe;
+  border-radius: 999px;
+  background: #f3e8ff;
+  color: #6b21a8;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-transform: capitalize;
+}
+
+.recurrence-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.recurrence-fields .text-input { width: auto; min-width: 130px; }
+
+.recurrence-fields .recurrence-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.recurrence-toggle input { accent-color: var(--forest); }
+.recurrence-toggle:has(input:disabled) { cursor: not-allowed; opacity: 0.6; }
+.recurrence-hint { color: var(--muted); font-size: 12px; }
+
+.todo-create-form .recurrence-fields { grid-column: 1 / -1; }
+
 .notification-action.is-enabled {
   border-color: #b7d2bd;
   background: #e8f2e7;
@@ -825,6 +928,55 @@ select:focus-visible {
   animation: rise-in 180ms ease-out both;
 }
 
+.template-dialog {
+  display: flex;
+  max-height: min(88svh, 820px);
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.template-dialog > .todo-dialog-header { flex-shrink: 0; }
+.template-manager { min-height: 0; overflow-y: auto; }
+.template-save-form { overflow-y: auto; }
+.template-description-input { min-height: 88px; padding: 10px 13px; resize: vertical; }
+
+.template-card-list {
+  display: grid;
+  gap: 10px;
+  padding: 0 4px 4px 0;
+  margin: 0;
+  list-style: none;
+}
+
+.template-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fbfcf9;
+}
+
+.template-card-heading,
+.template-badges,
+.template-card-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.template-card-heading { justify-content: space-between; }
+.template-card-heading h3 { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 16px; }
+.template-category,
+.template-badge { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+.template-category { padding: 3px 8px; border-radius: 99px; background: var(--mint); color: var(--forest-deep); }
+.template-description { margin: 8px 0; color: var(--muted); font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.template-badges { min-height: 25px; margin-top: 7px; }
+.template-card-actions { justify-content: flex-end; margin-top: 12px; }
+.template-card-actions .primary-action,
+.template-card-actions .secondary-action { width: auto; min-height: 38px; margin: 0; }
+.delete-template-action { color: #a93630; }
+
 .todo-dialog-header {
   display: flex;
   align-items: center;
@@ -921,6 +1073,14 @@ select:focus-visible {
 
   .todo-list-toolbar { justify-content: flex-start; }
 
+  .quick-template-control {
+    align-items: flex-start;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .quick-template-control .text-input { width: 100%; }
+
   .tag-filter {
     width: 100%;
     justify-content: space-between;
@@ -945,12 +1105,19 @@ select:focus-visible {
     gap: 12px;
   }
 
+  .draft-subtask-entry { max-width: none; }
+  .draft-subtask-entry .secondary-action { padding: 0 11px; }
+
   .todo-title-field { grid-column: 1 / -1; }
 
   .add-todo-action {
     width: 100%;
     grid-column: 1 / -1;
   }
+
+  .todo-create-actions { align-items: stretch; }
+  .todo-create-actions .secondary-action,
+  .todo-create-actions .add-todo-action { width: 100%; }
 
   .todo-row {
     grid-template-columns: 26px minmax(0, 1fr) auto;

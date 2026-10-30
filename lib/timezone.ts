@@ -111,3 +111,35 @@ export function formatSingaporeDateTime(value: Date | string): string {
     timeStyle: 'short',
   }).format(date);
 }
+
+export interface SingaporeParts {
+  year: number;
+  month: number; // 1-12
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+}
+
+export function toSingaporeParts(value: Date | string): SingaporeParts {
+  const date = asDate(value);
+  if (!date) throw new Error('Invalid date value');
+
+  const parts = singaporeDateParts(date);
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
+    second: Number(parts.second),
+  };
+}
+
+// Out-of-range fields (e.g. day 32) roll over, so callers can add whole days directly.
+export function fromSingaporeParts(parts: SingaporeParts): string {
+  const { year, month, day, hour, minute, second } = parts;
+  return formatSingaporeIsoDateTime(
+    new Date(Date.UTC(year, month - 1, day, hour - SINGAPORE_OFFSET_HOURS, minute, second)),
+  );
+}
