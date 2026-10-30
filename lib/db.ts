@@ -96,6 +96,16 @@ export interface Tag {
   created_at: string;
 }
 
+export interface CreateTagInput {
+  name: string;
+  color?: string;
+}
+
+export interface UpdateTagInput {
+  name?: string;
+  color?: string;
+}
+
 export interface Template {
   id: number;
   user_id: number;
@@ -178,6 +188,8 @@ const schema = `
     tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
     PRIMARY KEY (todo_id, tag_id)
   );
+  CREATE INDEX IF NOT EXISTS idx_tags_user_id ON tags(user_id);
+  CREATE INDEX IF NOT EXISTS idx_todo_tags_tag_id ON todo_tags(tag_id);
 
   CREATE TABLE IF NOT EXISTS templates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -629,6 +641,93 @@ export function createTodoRepository(database: AppDatabase) {
   return todoDB;
 }
 
+export function createTagRepository(database: AppDatabase) {
+  const tagDB = {
+    attachToTodo(todoId: number, tagId: number, userId: number): void {
+      const attach = database.transaction(() => {
+        const ownedTodo = database
+          .prepare('SELECT id FROM todos WHERE id = ? AND user_id = ?')
+          .get(todoId, userId);
+        const ownedTag = database
+          .prepare('SELECT id FROM tags WHERE id = ? AND user_id = ?')
+          .get(tagId, userId);
+        if (!ownedTodo || !ownedTag) throw new Error('Todo or tag not found');
+
+        database.prepare('INSERT OR IGNORE INTO todo_tags (todo_id, tag_id) VALUES (?, ?)')
+          .run(todoId, tagId);
+      });
+      attach.immediate();
+    },
+    create(userId: number, input: CreateTagInput): Tag {
+      const name = input.name.trim();
+      if (!name) throw new Error('Tag name is required');
+      const result = database
+        .prepare('INSERT INTO tags (user_id, name, color) VALUES (?, ?, ?)')
+        .run(userId, name, input.color ?? '#3B82F6');
+      return this.findById(Number(result.lastInsertRowid), userId) as Tag;
+    },
+    delete(tagId: number, userId: number): boolean {
+      const result = database.prepare('DELETE FROM tags WHERE id = ? AND user_id = ?')
+        .run(tagId, userId);
+      return result.changes === 1;
+    },
+    detachFromTodo(todoId: number, tagId: number, userId: number): void {
+      const detach = database.transaction(() => {
+        const ownedTodo = database
+          .prepare('SELECT id FROM todos WHERE id = ? AND user_id = ?')
+          .get(todoId, userId);
+        const ownedTag = database
+          .prepare('SELECT id FROM tags WHERE id = ? AND user_id = ?')
+          .get(tagId, userId);
+        if (!ownedTodo || !ownedTag) throw new Error('Todo or tag not found');
+
+        database.prepare('DELETE FROM todo_tags WHERE todo_id = ? AND tag_id = ?')
+          .run(todoId, tagId);
+      });
+      detach.immediate();
+    },
+    findAllByUser(userId: number): Tag[] {
+      return database
+        .prepare('SELECT * FROM tags WHERE user_id = ? ORDER BY name COLLATE NOCASE, id')
+        .all(userId) as Tag[];
+    },
+    findById(tagId: number, userId: number): Tag | null {
+      return (database
+        .prepare('SELECT * FROM tags WHERE id = ? AND user_id = ?')
+        .get(tagId, userId) as Tag | undefined) ?? null;
+    },
+    findByTodoId(todoId: number): Tag[] {
+      return database
+        .prepare(
+          `SELECT tags.* FROM tags
+           INNER JOIN todo_tags ON todo_tags.tag_id = tags.id
+           WHERE todo_tags.todo_id = ? ORDER BY tags.name COLLATE NOCASE, tags.id`,
+        )
+        .all(todoId) as Tag[];
+    },
+    update(tagId: number, userId: number, input: UpdateTagInput): Tag | null {
+      const updates: Array<[string, string]> = [];
+      if (input.name !== undefined) {
+        const name = input.name.trim();
+        if (!name) throw new Error('Tag name is required');
+        updates.push(['name', name]);
+      }
+      if (input.color !== undefined) updates.push(['color', input.color]);
+
+      if (updates.length > 0) {
+        const assignments = updates.map(([column]) => `${column} = ?`);
+        const result = database
+          .prepare(`UPDATE tags SET ${assignments.join(', ')} WHERE id = ? AND user_id = ?`)
+          .run(...updates.map(([, value]) => value), tagId, userId);
+        if (result.changes === 0) return null;
+      }
+      return this.findById(tagId, userId);
+    },
+  };
+
+  return tagDB;
+}
+
 export function createSubtaskRepository(database: AppDatabase) {
   const findById = database.prepare<[number], StoredSubtask>('SELECT * FROM subtasks WHERE id = ?');
   const findOwned = database.prepare<[number, number], StoredSubtask>(
@@ -693,6 +792,7 @@ export function createSubtaskRepository(database: AppDatabase) {
 export const db = createAppDatabase();
 export const { userDB, authenticatorDB, challengeDB, rateLimitDB } = createAuthRepositories(db);
 export const todoDB = createTodoRepository(db);
+export const tagDB = createTagRepository(db);
 export const subtaskDB = createSubtaskRepository(db);
 
 export function createHolidayRepository(database: AppDatabase) {

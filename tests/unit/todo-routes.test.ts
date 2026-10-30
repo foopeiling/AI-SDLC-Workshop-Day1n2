@@ -9,6 +9,7 @@ describe('todo API routes', () => {
   let database: import('../../lib/db').AppDatabase;
   let userDB: typeof import('../../lib/db').userDB;
   let todoDB: typeof import('../../lib/db').todoDB;
+  let tagDB: typeof import('../../lib/db').tagDB;
   let aliceId: number;
   let bobId: number;
   let collectionRoutes: typeof import('../../app/api/todos/route');
@@ -26,6 +27,7 @@ describe('todo API routes', () => {
     database = databaseModule.db;
     userDB = databaseModule.userDB;
     todoDB = databaseModule.todoDB;
+    tagDB = databaseModule.tagDB;
     aliceId = userDB.create(`alice-${Date.now()}`).id;
     bobId = userDB.create(`bob-${Date.now()}`).id;
     collectionRoutes = await import('../../app/api/todos/route');
@@ -170,6 +172,47 @@ describe('todo API routes', () => {
     expect(updated).toMatchObject({ title: 'Updated title', priority: 'low', due_date: null });
   });
 
+  it('creates, replaces, and clears todo tags through the todo routes', async () => {
+    const workTag = tagDB.create(aliceId, { name: 'Work' });
+    const urgentTag = tagDB.create(aliceId, { name: 'Urgent' });
+    const createRequest = new NextRequest('http://localhost:3000/api/todos', {
+      method: 'POST',
+      headers: {
+        origin: 'http://localhost:3000',
+        'x-real-ip': '192.0.2.125',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ title: 'Tagged task', tag_ids: [workTag.id, urgentTag.id] }),
+    });
+    const createResponse = await collectionRoutes.POST(createRequest);
+    const created = await createResponse.json();
+
+    expect(createResponse.status).toBe(201);
+    expect(created.tags.map((tag: { id: number }) => tag.id)).toEqual([urgentTag.id, workTag.id]);
+
+    const update = (tagIds: number[]) => new NextRequest(
+      `http://localhost:3000/api/todos/${created.id}`,
+      {
+        method: 'PUT',
+        headers: {
+          origin: 'http://localhost:3000',
+          'x-real-ip': `192.0.2.${126 + tagIds.length}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ tag_ids: tagIds }),
+      },
+    );
+    const context = { params: Promise.resolve({ id: String(created.id) }) };
+    const replacementResponse = await itemRoutes.PUT(update([workTag.id]), context);
+    const replacement = await replacementResponse.json();
+    expect(replacementResponse.status).toBe(200);
+    expect(replacement.tags.map((tag: { id: number }) => tag.id)).toEqual([workTag.id]);
+
+    const clearResponse = await itemRoutes.PUT(update([]), context);
+    expect(clearResponse.status).toBe(200);
+    expect((await clearResponse.json()).tags).toEqual([]);
+  });
+
   it('records a valid notification timestamp and rejects invalid timestamps or orphan reminders', async () => {
     const todo = todoDB.create({
       user_id: aliceId,
@@ -200,8 +243,7 @@ describe('todo API routes', () => {
       last_notification_sent: 'not-a-timestamp',
       expected_due_date: '2099-12-31T12:00:00+08:00',
       expected_reminder_minutes: 15,
-    }), context)).status)
-      .toBe(400);
+    }), context)).status).toBe(400);
     expect((await itemRoutes.PUT(request({ due_date: null, reminder_minutes: 30 }), context)).status)
       .toBe(400);
 

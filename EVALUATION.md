@@ -183,23 +183,23 @@ This document provides a comprehensive checklist for evaluating the completeness
 ---
 
 ### ✅ Feature 06: Tag System
-**Status:** ⬜ Not Started | ⬜ In Progress | ⬜ Complete | ⬜ Verified
+**Status:** ⬜ Not Started | ✅ In Progress | ⬜ Complete | ⬜ Verified
 
 **Implementation Checklist:**
-- [ ] Database: `tags` and `todo_tags` tables
-- [ ] API endpoint: `GET /api/tags`
-- [ ] API endpoint: `POST /api/tags`
-- [ ] API endpoint: `PUT /api/tags/[id]`
-- [ ] API endpoint: `DELETE /api/tags/[id]`
-- [ ] API endpoint: `POST /api/todos/[id]/tags`
-- [ ] API endpoint: `DELETE /api/todos/[id]/tags`
-- [ ] "Manage Tags" modal
-- [ ] Tag creation form (name + color picker)
-- [ ] Tag list with edit/delete buttons
-- [ ] Tag selection in todo form (checkboxes)
-- [ ] Tag badges on todos (colored)
-- [ ] Click badge to filter by tag
-- [ ] Tag filter indicator with clear button
+- [x] Database: `tags` and `todo_tags` tables
+- [x] API endpoint: `GET /api/tags`
+- [x] API endpoint: `POST /api/tags`
+- [x] API endpoint: `PUT /api/tags/[id]`
+- [x] API endpoint: `DELETE /api/tags/[id]`
+- [x] API endpoint: `POST /api/todos/[id]/tags`
+- [x] API endpoint: `DELETE /api/todos/[id]/tags`
+- [x] "Manage Tags" modal
+- [x] Tag creation form (name + color picker and hex input)
+- [x] Tag list with edit/delete buttons
+- [x] Tag selection in todo create/edit forms (multi-select pills)
+- [x] Tag badges on todos (colored with contrast-aware text)
+- [x] Click badge to filter by tag
+- [x] All Tags dropdown clears the tag filter
 
 **Testing:**
 - [ ] E2E test: Create tag
@@ -208,7 +208,9 @@ This document provides a comprehensive checklist for evaluating the completeness
 - [ ] E2E test: Assign multiple tags to todo
 - [ ] E2E test: Filter by tag
 - [ ] E2E test: Duplicate tag name validation
-- [ ] Unit test: Tag name validation
+- [x] Unit test: Tag name validation, color validation, ownership, idempotency, and cascade deletion
+
+Playwright verification is currently blocked in shared passkey registration: the existing `registerUser` flow remains on `/login`, so the tag assertions are not reached.
 
 **Acceptance Criteria:**
 - [ ] Tags unique per user

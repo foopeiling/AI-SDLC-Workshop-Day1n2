@@ -279,7 +279,7 @@ Organize todos with custom color-coded labels for better categorization and filt
 1. Open tag management modal
 2. Click **"Edit"** button next to any tag
 3. Modify name and/or color
-4. Click **"Update"**
+4. Click **"Save tag"**
 5. Changes reflect on all todos using that tag
 
 #### Deleting Tags
@@ -296,7 +296,7 @@ Organize todos with custom color-coded labels for better categorization and filt
 3. Selected tags show:
    - ✓ Checkmark
    - Colored background
-   - White text
+  - Black or white text chosen for readable contrast
 4. Unselected tags show:
    - No checkmark
    - White/gray background
@@ -307,7 +307,7 @@ Organize todos with custom color-coded labels for better categorization and filt
 1. Click **"Edit"** on a todo
 2. Tag selection appears in edit modal
 3. Toggle tags on/off
-4. Click **"Update"** to save
+4. Click **"Save changes"** to save
 
 ### Filtering by Tags
 1. Use **"All Tags"** dropdown in filter section
@@ -317,7 +317,7 @@ Organize todos with custom color-coded labels for better categorization and filt
 
 ### Visual Display
 - Tags appear as **colored pills** on todos
-- Tag names in **white text** on colored background
+- Tag text uses black or white on the colored background to maintain readable contrast
 - Rounded full shape for visual appeal
 - Positioned after priority and recurrence badges
 - Visible in all sections (Overdue, Pending, Completed)
@@ -335,7 +335,7 @@ Organize todos with custom color-coded labels for better categorization and filt
 - **Color picker**: Standard HTML color input
 - **Hex input**: Manual entry supported
 - **Tag list**: Shows all your tags with actions
-- **Dark mode**: Fully supported
+- **Contrast**: Text color adapts automatically to the selected tag color
 
 ---
 

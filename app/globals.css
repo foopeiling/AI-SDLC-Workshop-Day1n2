@@ -319,6 +319,188 @@ select:focus-visible {
   margin: 0;
 }
 
+.todo-list-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.tag-filter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.tag-filter .text-input {
+  width: min(240px, 56vw);
+  height: 40px;
+}
+
+.todo-tag-controls {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  min-width: 0;
+}
+
+.tag-selector {
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+.tag-selector .field-label { margin-bottom: 8px; }
+
+.tag-pick-list,
+.todo-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.tag-pick,
+.todo-tag-pill,
+.managed-tag-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tag-pick {
+  min-height: 32px;
+  padding: 4px 10px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.tag-pick.is-selected { border-color: transparent; }
+
+.todo-tag-pill {
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 0;
+  cursor: pointer;
+}
+
+.todo-tag-name {
+  overflow: hidden;
+  max-width: 9rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manage-tags-action {
+  width: auto;
+  min-height: 42px;
+  flex: 0 0 auto;
+}
+
+.manage-tags-dialog {
+  display: flex;
+  max-height: min(90svh, 760px);
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.manage-tag-list {
+  max-height: 260px;
+  padding: 0;
+  margin: 0 0 22px;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+
+.manage-tag-row {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.managed-tag-name {
+  overflow: hidden;
+  padding: 6px 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manage-tag-actions { display: flex; flex: 0 0 auto; }
+
+.tag-create-form,
+.tag-edit-form {
+  display: grid;
+  align-items: end;
+  gap: 10px;
+}
+
+.tag-create-form {
+  grid-template-columns: minmax(120px, 1fr) 54px minmax(100px, 126px) auto;
+}
+
+.tag-edit-form {
+  width: 100%;
+  grid-template-columns: minmax(120px, 1fr) 54px minmax(100px, 126px);
+}
+
+.tag-create-form .field-label,
+.tag-edit-form .field-label { margin-bottom: 6px; }
+
+.tag-create-form .text-input,
+.tag-edit-form .text-input { height: 42px; padding: 0 9px; }
+
+.color-input {
+  display: block;
+  width: 48px;
+  height: 42px;
+  padding: 4px;
+  border: 1px solid #cbd6cc;
+  border-radius: 5px;
+  background: white;
+  cursor: pointer;
+}
+
+.tag-create-action {
+  width: auto;
+  min-height: 42px;
+  margin: 0;
+  padding: 0 12px;
+}
+
+.tag-edit-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.tag-edit-actions .primary-action {
+  width: auto;
+  min-height: 40px;
+  margin: 0;
+  padding: 0 12px;
+}
+
+.tag-edit-actions .secondary-action {
+  min-height: 40px;
+  padding: 0 12px;
+}
+
 .todo-filter-bar {
   display: flex;
   justify-content: flex-end;
@@ -679,6 +861,39 @@ select:focus-visible {
   }
 
   .todo-workspace { margin-top: 38px; }
+
+  .todo-list-toolbar { justify-content: flex-start; }
+
+  .tag-filter {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .todo-tag-controls {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .tag-create-form,
+  .tag-edit-form {
+    grid-template-columns: minmax(0, 1fr) 48px minmax(90px, 0.8fr);
+  }
+
+  .tag-create-action { grid-column: 1 / -1; }
+
+  .tag-create-action { width: 100%; }
+
+  .todo-create-form {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .todo-title-field { grid-column: 1 / -1; }
+
+  .add-todo-action {
+    width: 100%;
+    grid-column: 1 / -1;
+  }
 
   .todo-row {
     grid-template-columns: 26px minmax(0, 1fr) auto;
