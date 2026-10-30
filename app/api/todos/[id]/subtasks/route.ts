@@ -1,12 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
-import { readJsonBody } from '@/lib/auth-validation';
+import { readJsonBodyLimited } from '@/lib/auth-validation';
 import { subtaskDB, todoDB } from '@/lib/db';
 import { authorizeTodoRequest } from '@/lib/todo-api-guard';
 
 const createSubtaskSchema = z.object({
-  title: z.string().trim().min(1, 'Subtask title is required'),
+  title: z.string().trim().min(1, 'Subtask title is required').max(500, 'Subtask titles cannot exceed 500 characters'),
 }).strict();
 
 export async function POST(
@@ -26,7 +26,15 @@ export async function POST(
     return NextResponse.json({ error: 'Todo not found' }, { status: 404 });
   }
 
-  const parsed = createSubtaskSchema.safeParse(await readJsonBody(request));
+  const body = await readJsonBodyLimited(request);
+  if (!body.ok) {
+    return NextResponse.json(
+      { error: body.reason === 'too-large' ? 'Request body is too large.' : 'Invalid JSON body.' },
+      { status: body.reason === 'too-large' ? 413 : 400 },
+    );
+  }
+
+  const parsed = createSubtaskSchema.safeParse(body.value);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'Invalid subtask.' }, { status: 400 });
   }

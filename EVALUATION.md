@@ -294,20 +294,20 @@ Playwright verification is currently blocked in shared passkey registration: the
 ---
 
 ### ✅ Feature 09: Export & Import
-**Status:** ⬜ Not Started | ⬜ In Progress | ⬜ Complete | ⬜ Verified
+**Status:** ⬜ Not Started | ✅ In Progress | ⬜ Complete | ⬜ Verified
 
 **Implementation Checklist:**
-- [ ] API endpoint: `GET /api/todos/export`
-- [ ] API endpoint: `POST /api/todos/import`
-- [ ] Export button in UI
-- [ ] Import button with file picker
-- [ ] JSON format with version field
-- [ ] Export includes: todos, subtasks, tags, associations
-- [ ] Import validation (format, required fields)
-- [ ] ID remapping on import
-- [ ] Tag name conflict resolution (reuse existing)
-- [ ] Success message with counts
-- [ ] Error handling for invalid JSON
+- [x] API endpoint: `GET /api/todos/export`
+- [x] API endpoint: `POST /api/todos/import`
+- [x] JSON and CSV export controls in UI
+- [x] JSON import button with file picker and feedback
+- [x] JSON format with version field
+- [x] Export includes: todos, subtasks, tags, associations
+- [x] Import validation (format, required fields)
+- [x] ID remapping on import
+- [x] Tag name conflict resolution (case-insensitive reuse)
+- [x] Success message with imported count
+- [x] Error handling for invalid JSON
 
 **Testing:**
 - [ ] E2E test: Export todos
@@ -315,15 +315,17 @@ Playwright verification is currently blocked in shared passkey registration: the
 - [ ] E2E test: Import invalid JSON (error shown)
 - [ ] E2E test: Import preserves all data
 - [ ] E2E test: Imported todos appear immediately
-- [ ] Unit test: ID remapping logic
-- [ ] Unit test: JSON validation
+- [x] Unit test: ID remapping, nested relationships, and rollback
+- [x] Unit test: export formatting and import validation
+
+Playwright verification is currently blocked during shared passkey registration, before export/import assertions run.
 
 **Acceptance Criteria:**
-- [ ] Export creates valid JSON
-- [ ] Import validates format
-- [ ] All relationships preserved
-- [ ] No duplicate tags created
-- [ ] Error messages clear
+- [x] Export creates valid JSON
+- [x] Import validates format
+- [x] All relationships preserved
+- [x] No duplicate tags created for case-insensitive matches
+- [x] Error messages clear
 
 ---
 

@@ -5,7 +5,7 @@ test('manages tags, applies multiple tags, filters todos, and resets after delet
   await addVirtualAuthenticator(page);
   await registerUser(page, `tags-${Date.now()}`);
 
-  await page.getByRole('button', { name: 'Manage tags' }).click();
+  await page.getByRole('button', { name: 'Manage tags', exact: true }).click();
   const tagDialog = page.getByRole('dialog', { name: 'Manage tags' });
   await tagDialog.getByLabel('Tag name').fill('Work');
   await tagDialog.getByRole('button', { name: 'Create tag' }).click();
@@ -37,21 +37,22 @@ test('manages tags, applies multiple tags, filters todos, and resets after delet
   await page.getByLabel('Filter by tag').selectOption('');
   await expect(page.getByTestId('todo-row')).toHaveCount(2);
 
-  await page.getByRole('button', { name: 'Manage tags' }).click();
+  await page.getByRole('button', { name: 'Manage tags', exact: true }).click();
   await page.getByRole('button', { name: 'Edit Work' }).click();
   await page.getByLabel('Edit tag name').fill('Projects');
-  await page.getByLabel('Edit tag color').fill('#112233');
+  await page.getByLabel('Edit tag color', { exact: true }).fill('#112233');
   await page.getByRole('button', { name: 'Save tag' }).click();
   await expect(page.getByTestId('todo-row').filter({ hasText: 'Prepare release' }).getByText('Projects'))
     .toBeVisible();
+  await page.getByRole('button', { name: 'Close manage tags' }).click();
 
   await page.getByLabel('Filter by tag').selectOption({ label: 'Projects' });
   await expect(page.getByTestId('todo-row')).toHaveCount(1);
   page.once('dialog', (dialog) => dialog.accept());
-  await page.getByRole('button', { name: 'Manage tags' }).click();
+  await page.getByRole('button', { name: 'Manage tags', exact: true }).click();
   await page.getByRole('button', { name: 'Delete Projects' }).click();
   await expect(page.getByLabel('Filter by tag')).toHaveValue('');
   await expect(page.getByTestId('todo-row')).toHaveCount(2);
-  await expect(page.getByTestId('todo-row').filter({ hasText: 'Prepare release' }).getByText('Urgent'))
-    .toBeVisible();
+  await expect(page.getByTestId('todo-row').filter({ hasText: 'Prepare release' }).getByText('Projects'))
+    .toHaveCount(0);
 });

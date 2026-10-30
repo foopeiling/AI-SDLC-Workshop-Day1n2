@@ -749,15 +749,26 @@ Backup your todos, share them between devices, or analyze data in spreadsheets w
 **Fields Included**:
 ```json
 {
-  "id": 1,
-  "title": "Sample Todo",
-  "completed": false,
-  "due_date": "2025-11-10T14:00",
-  "priority": "high",
-  "is_recurring": true,
-  "recurrence_pattern": "weekly",
-  "reminder_minutes": 60,
-  "created_at": "2025-11-02T10:30:00"
+  "version": 1,
+  "exported_at": "2025-11-02T10:30:00+08:00",
+  "todos": [
+    {
+      "title": "Sample Todo",
+      "completed": false,
+      "due_date": "2025-11-10T14:00:00+08:00",
+      "priority": "high",
+      "is_recurring": true,
+      "recurrence_pattern": "weekly",
+      "reminder_minutes": 60,
+      "created_at": "2025-11-02 10:30:00",
+      "subtasks": [
+        { "title": "Prepare outline", "completed": false, "position": 0 }
+      ],
+      "tags": [
+        { "name": "Work", "color": "#3B82F6" }
+      ]
+    }
+  ]
 }
 ```
 
@@ -808,12 +819,16 @@ ID,Title,Completed,Due Date,Priority,Recurring,Pattern,Reminder
 - Recurrence settings
 - Reminder timings
 - Creation timestamps
+- Subtasks, including completion state and order
+- Tag names, colors, and todo associations
 
 **What's NOT Imported**:
-- ❌ Original todo IDs (new IDs assigned)
-- ❌ User associations (links to importing user)
-- ❌ Tags (must be recreated/reassigned)
-- ❌ Subtasks (if not in export format)
+- ❌ Original database IDs (new todo and subtask IDs are assigned)
+- ❌ Previous user associations (records belong to the importing account)
+- ❌ Reminder notification timestamps or previous update timestamps
+- ❌ Duplicate merging (every import creates new todos)
+
+Existing tags are reused by case-insensitive name for the importing user; their existing color is kept. Tags not already present are created from the imported name and color.
 
 #### Import Validation
 

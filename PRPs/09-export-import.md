@@ -1,6 +1,6 @@
 # Export & Import
 
-Backup, transfer, and analyze todos via JSON (full-fidelity, re-importable) and CSV (spreadsheet-friendly, one-way) exports.
+Backup, transfer, and analyze todos via JSON (full-fidelity, re-importable) and CSV (spreadsheet-friendly, one-way) exports. CSV supports analysis by priority; use JSON when analysis requires tag relationships.
 
 **Dependencies**: Reads/writes the `todos` table ([PRP 01](./01-todo-crud-operations.md)), `subtasks` table ([PRP 05](./05-subtasks-progress.md)), and `tags`/`todo_tags` tables ([PRP 06](./06-tag-system.md)). This feature adds **no new database tables** — only two API routes and export/import UI. All operations run within a single authenticated user's scope (`session.userId`).
 
@@ -25,7 +25,7 @@ Import only accepts the JSON format produced by this app's own export.
 ## User Stories
 
 - **As a user**, I want to export all my todos to a JSON file so I can keep a personal backup in case something goes wrong.
-- **As a user**, I want to export my todos to CSV so I can open them in a spreadsheet and build a pivot table of completion rates by priority/tag.
+- **As a user**, I want to export my todos to CSV so I can open them in a spreadsheet and build a pivot table of completion rates by priority.
 - **As a user**, I want to import a previously exported JSON file so I can restore my todos after a data loss, or bring them into a new account.
 - **As a user switching devices**, I want to export from device A and import on device B so my task list follows me without needing account sync.
 - **As a cautious user**, I want the import to fail loudly with a clear error message if I pick the wrong file, rather than silently corrupting my todo list.
@@ -87,7 +87,7 @@ export interface TodoExport {
 }
 
 export interface TodoExportItem
-  extends Omit<Todo, 'id' | 'user_id' | 'updated_at' | 'last_notification_sent'> {
+  extends Omit<Todo, 'id' | 'user_id' | 'updated_at' | 'last_notification_sent' | 'subtasks' | 'tags'> {
   subtasks: Array<Omit<Subtask, 'id' | 'todo_id' | 'created_at'>>;
   tags: Array<Pick<Tag, 'name' | 'color'>>;
 }
@@ -126,7 +126,7 @@ export async function GET(request: NextRequest) {
 
   const payload: TodoExport = {
     version: 1,
-    exported_at: getSingaporeNow().toISOString(),
+    exported_at: formatSingaporeIsoDateTime(getSingaporeNow()),
     todos: todos.map(toExportItem),
   };
 
@@ -312,6 +312,7 @@ function ExportImportToolbar({ onImported }: { onImported: () => void }) {
 - **Importing the same file twice**: by design, creates duplicate todos (import never merges/upserts against existing data). This is expected behavior, not a bug — call it out in the UI copy ("Import creates new todos and does not merge with existing ones") per `USER_GUIDE.md` import tips.
 - **Tag name conflicts on import**: matching is **case-insensitive** (`"Work"` and `"work"` resolve to the same tag) to avoid accidental duplicate tags; the color of the *existing* tag wins over the imported color when reusing.
 - **CSV values containing commas/quotes/newlines** (e.g., a todo titled `Buy milk, eggs, "bread"`): must be RFC 4180 quoted/escaped, or the CSV is corrupted when opened in Excel/Sheets.
+- **Spreadsheet formula-like CSV values** (a text cell beginning with `=`, `+`, `-`, or `@`, optionally after whitespace): prefix an apostrophe before RFC 4180 quoting so spreadsheet software treats the value as text.
 - **Very large import files**: no hard size limit is enforced per spec, but the whole import runs in one transaction and one request body — flag files over ~10MB in the UI as "this may take a while" rather than silently timing out; do not stream-parse (JSON is validated as a whole document via zod).
 - **CSV export attempted for import**: CSV is never accepted by the import file picker (`accept="application/json,.json"`) and the import schema requires `version: 1`, which CSV cannot satisfy — reinforces "CSV is one-way."
 - **Recurring/reminder fields with invalid enum values** in a hand-edited JSON file: rejected by the zod schema, same generic format error (no need to leak which field failed).

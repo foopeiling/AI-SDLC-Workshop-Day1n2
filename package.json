@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "seed:holidays": "node scripts/seed-holidays.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -10,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
-    "test:e2e": "playwright test",
+    "test:e2e": "node scripts/run-e2e.mjs",
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
