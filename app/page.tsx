@@ -1,9 +1,12 @@
 'use client';
 
-import { CalendarClock, Check, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Bell, CalendarClock, Check, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { AccountActions } from '@/components/account-actions';
-import type { Priority, Todo, UpdateTodoInput } from '@/lib/db';
+import type { Priority, ReminderMinutes, Subtask, Todo, UpdateTodoInput } from '@/lib/db';
+import { REMINDER_LABELS } from '@/lib/reminders';
+import { useNotifications } from '@/lib/hooks/useNotifications';
+import { calculateProgress } from '@/lib/subtask-utils';
 import { formatSingaporeDateTime, formatSingaporeInput, getSingaporeNow } from '@/lib/timezone';
 import { normalizeDueDate, sectionTodos } from '@/lib/todo-utils';
 
@@ -11,6 +14,7 @@ interface FormValues {
   title: string;
   dueDate: string;
   priority: Priority;
+  reminderMinutes: ReminderMinutes | null;
 }
 
 interface ApiError {
@@ -26,23 +30,114 @@ async function getApiError(response: Response): Promise<string> {
   }
 }
 
+type SubtaskAction =
+  | { type: 'create'; title: string }
+  | { type: 'update'; subtask: Subtask; completed: boolean }
+  | { type: 'delete'; subtask: Subtask };
+
+function SubtaskList({ todo, disabled, onMutate }: {
+  todo: Todo;
+  disabled: boolean;
+  onMutate: (todo: Todo, action: SubtaskAction) => Promise<boolean>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [title, setTitle] = useState('');
+  const { completed, total, percent } = calculateProgress(todo.subtasks ?? []);
+
+  async function addSubtask(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!title.trim() || disabled) return;
+    if (await onMutate(todo, { type: 'create', title: title.trim() })) setTitle('');
+  }
+
+  return (
+    <div className="subtasks">
+      <button
+        className="subtask-toggle"
+        type="button"
+        aria-expanded={expanded}
+        aria-controls={`subtasks-${todo.id}`}
+        onClick={() => setExpanded(!expanded)}
+      >
+        {expanded ? '−' : '+'} Subtasks
+      </button>
+      {total > 0 && (
+        <div className="subtask-progress">
+          <div className="subtask-progress-label"><span>{completed}/{total} subtasks</span><span>{percent}%</span></div>
+          <div
+            className="subtask-progress-track"
+            role="progressbar"
+            aria-label={`Subtask progress for ${todo.title}`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percent}
+            aria-valuetext={`${completed}/${total} subtasks`}
+          >
+            <div className={`subtask-progress-fill${percent === 100 ? ' is-complete' : ''}`} style={{ width: `${percent}%` }} />
+          </div>
+        </div>
+      )}
+      {expanded && (
+        <div id={`subtasks-${todo.id}`}>
+          <ul className="subtask-list">
+            {(todo.subtasks ?? []).map((subtask) => (
+              <li className="subtask-row" key={subtask.id}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={subtask.completed}
+                    disabled={disabled}
+                    onChange={(event) => void onMutate(todo, { type: 'update', subtask, completed: event.target.checked })}
+                    aria-label={`Mark subtask "${subtask.title}" as ${subtask.completed ? 'incomplete' : 'complete'}`}
+                  />
+                  <span className={subtask.completed ? 'is-complete' : ''}>{subtask.title}</span>
+                </label>
+                <button
+                  type="button"
+                  className="icon-action delete-action"
+                  aria-label={`Delete subtask ${subtask.title}`}
+                  disabled={disabled}
+                  onClick={() => void onMutate(todo, { type: 'delete', subtask })}
+                ><X size={15} aria-hidden="true" /></button>
+              </li>
+            ))}
+          </ul>
+          <form className="subtask-form" onSubmit={addSubtask}>
+            <input
+              className="text-input"
+              aria-label={`New subtask for ${todo.title}`}
+              placeholder="Add subtask..."
+              value={title}
+              disabled={disabled}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+            <button type="submit" className="subtask-add" disabled={disabled || !title.trim()}>Add</button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TodoRows({
   todos,
   pendingTodoIds,
   onToggle,
   onEdit,
   onDelete,
+  onSubtaskMutation,
 }: {
   todos: Todo[];
   pendingTodoIds: Set<number>;
   onToggle: (todo: Todo, completed: boolean) => void;
   onEdit: (todo: Todo) => void;
   onDelete: (todo: Todo) => void;
+  onSubtaskMutation: (todo: Todo, action: SubtaskAction) => Promise<boolean>;
 }) {
   return (
     <ul className="todo-list">
       {todos.map((todo) => {
-        const isPending = pendingTodoIds.has(todo.id);
+        const isPending = todo.id < 0 || pendingTodoIds.has(todo.id);
         return (
           <li className="todo-row" data-testid="todo-row" key={todo.id}>
           <label className="todo-check">
@@ -59,6 +154,11 @@ function TodoRows({
             <span className={todo.completed ? 'todo-title is-complete' : 'todo-title'}>{todo.title}</span>
             <span className="todo-meta">
               <span className={`priority-label priority-${todo.priority}`}>{todo.priority}</span>
+              {todo.reminder_minutes !== null && (
+                <span className="reminder-badge" aria-label={`Reminder ${REMINDER_LABELS[todo.reminder_minutes]} before due time`}>
+                  <Bell size={13} aria-hidden="true" /> {REMINDER_LABELS[todo.reminder_minutes]}
+                </span>
+              )}
               {todo.due_date && (
                 <span className="todo-due">
                   <CalendarClock size={14} aria-hidden="true" />
@@ -89,6 +189,7 @@ function TodoRows({
               <Trash2 size={17} aria-hidden="true" />
             </button>
           </div>
+          <SubtaskList todo={todo} disabled={isPending} onMutate={onSubtaskMutation} />
           </li>
         );
       })}
@@ -106,8 +207,14 @@ export default function HomePage() {
   const [priority, setPriority] = useState<Priority>('medium');
   const [priorityFilter, setPriorityFilter] = useState<Priority | 'all'>('all');
   const [dueDate, setDueDate] = useState('');
+  const [reminderMinutes, setReminderMinutes] = useState<ReminderMinutes | null>(null);
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
-  const [editValues, setEditValues] = useState<FormValues>({ title: '', dueDate: '', priority: 'medium' });
+  const [editValues, setEditValues] = useState<FormValues>({
+    title: '',
+    dueDate: '',
+    priority: 'medium',
+    reminderMinutes: null,
+  });
   const [now, setNow] = useState(() => getSingaporeNow());
   const [pendingTodoIds, setPendingTodoIds] = useState<Set<number>>(() => new Set());
   const pendingTodoIdsRef = useRef<Set<number>>(new Set());
@@ -230,7 +337,7 @@ export default function HomePage() {
       priority,
       is_recurring: false,
       recurrence_pattern: null,
-      reminder_minutes: null,
+      reminder_minutes: reminderMinutes,
       last_notification_sent: null,
       created_at: getSingaporeNow().toISOString(),
       updated_at: null,
@@ -241,6 +348,7 @@ export default function HomePage() {
     setTitle('');
     setPriority('medium');
     setDueDate('');
+    setReminderMinutes(null);
 
     try {
       const response = await fetch('/api/todos', {
@@ -250,6 +358,7 @@ export default function HomePage() {
           title: optimisticTodo.title,
           due_date: normalizedDueDate.value,
           priority,
+          reminder_minutes: reminderMinutes,
         }),
       });
       if (!response.ok) throw new Error(await getApiError(response));
@@ -298,6 +407,7 @@ export default function HomePage() {
       title: todo.title,
       dueDate: todo.due_date ? formatSingaporeInput(todo.due_date) : '',
       priority: todo.priority,
+      reminderMinutes: todo.reminder_minutes,
     });
   }
 
@@ -323,6 +433,7 @@ export default function HomePage() {
     const update: UpdateTodoInput = {
       title: editValues.title.trim(),
       priority: editValues.priority,
+      reminder_minutes: editValues.reminderMinutes,
       ...(dueDateChanged ? { due_date: normalizedDueDate } : {}),
     };
     if (!beginTodoMutation(previousTodo.id)) return;
@@ -330,6 +441,7 @@ export default function HomePage() {
       ...previousTodo,
       ...update,
       due_date: dueDateChanged ? normalizedDueDate ?? null : previousTodo.due_date,
+      reminder_minutes: editValues.reminderMinutes,
     };
     setTodos((currentTodos) => currentTodos.map((todo) => todo.id === previousTodo.id ? optimisticTodo : todo));
     setError(null);
@@ -368,6 +480,56 @@ export default function HomePage() {
     }
   }
 
+  async function mutateSubtask(todo: Todo, action: SubtaskAction): Promise<boolean> {
+    if (todo.id < 0 || !beginTodoMutation(todo.id)) return false;
+    setError(null);
+    const previousSubtasks = todo.subtasks ?? [];
+    const optimisticSubtask: Subtask | null = action.type === 'create' ? {
+      id: -getSingaporeNow().getTime(),
+      todo_id: todo.id,
+      title: action.title,
+      completed: false,
+      position: previousSubtasks.reduce((max, subtask) => Math.max(max, subtask.position), -1) + 1,
+      created_at: getSingaporeNow().toISOString(),
+    } : null;
+    const optimisticSubtasks = action.type === 'create' && optimisticSubtask
+      ? [...previousSubtasks, optimisticSubtask]
+      : action.type === 'delete'
+        ? previousSubtasks.filter((subtask) => subtask.id !== action.subtask.id)
+        : action.type === 'update'
+          ? previousSubtasks.map((subtask) => subtask.id === action.subtask.id ? { ...subtask, completed: action.completed } : subtask)
+          : previousSubtasks;
+    const replaceSubtasks = (subtasks: Subtask[]) => setTodos((currentTodos) =>
+      currentTodos.map((item) => item.id === todo.id ? { ...item, subtasks } : item));
+    replaceSubtasks(optimisticSubtasks);
+
+    try {
+      const response = await fetch(
+        action.type === 'create' ? `/api/todos/${todo.id}/subtasks` : `/api/subtasks/${action.subtask.id}`,
+        {
+          method: action.type === 'create' ? 'POST' : action.type === 'update' ? 'PUT' : 'DELETE',
+          ...(action.type !== 'delete' ? {
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(action.type === 'create' ? { title: action.title } : { completed: action.completed }),
+          } : {}),
+        },
+      );
+      if (!response.ok) throw new Error(await getApiError(response));
+      if (action.type !== 'delete') {
+        const saved = await response.json() as Subtask;
+        const optimisticId = action.type === 'create' ? optimisticSubtask?.id : action.subtask.id;
+        replaceSubtasks(optimisticSubtasks.map((subtask) => subtask.id === optimisticId ? saved : subtask));
+      }
+      return true;
+    } catch (caughtError) {
+      replaceSubtasks(previousSubtasks);
+      setError(caughtError instanceof Error ? caughtError.message : 'Could not change subtask.');
+      return false;
+    } finally {
+      finishTodoMutation(todo.id);
+    }
+  }
+
   function renderSection(label: string, sectionItems: Todo[], className: string) {
     if (sectionItems.length === 0) return null;
 
@@ -382,6 +544,7 @@ export default function HomePage() {
           onToggle={toggleTodo}
           onEdit={openEditor}
           onDelete={deleteTodo}
+          onSubtaskMutation={mutateSubtask}
         />
       </section>
     );
@@ -394,7 +557,10 @@ export default function HomePage() {
           <span className="wordmark-mark" aria-hidden="true">T</span>
           <span>Todo</span>
         </div>
-        <AccountActions />
+        <div className="header-actions">
+          <NotificationToggle />
+          <AccountActions />
+        </div>
       </header>
 
       <section className="home-content todo-workspace">
@@ -426,9 +592,18 @@ export default function HomePage() {
               className="text-input"
               type="datetime-local"
               value={dueDate}
-              onChange={(event) => setDueDate(event.target.value)}
+              onChange={(event) => {
+                setDueDate(event.target.value);
+                if (!event.target.value) setReminderMinutes(null);
+              }}
             />
           </label>
+          <ReminderSelect
+            id="create-reminder"
+            dueDate={dueDate}
+            value={reminderMinutes}
+            onChange={setReminderMinutes}
+          />
           <button className="primary-action add-todo-action" type="submit" disabled={isLoading || isSubmitting || !title.trim()}>
             <Plus size={18} aria-hidden="true" /> Add todo
           </button>
@@ -501,8 +676,23 @@ export default function HomePage() {
               </label>
               <label>
                 <span className="field-label">Edit due date and time</span>
-                <input className="text-input" type="datetime-local" value={editValues.dueDate} onChange={(event) => setEditValues((values) => ({ ...values, dueDate: event.target.value }))} />
+                <input
+                  className="text-input"
+                  type="datetime-local"
+                  value={editValues.dueDate}
+                  onChange={(event) => setEditValues((values) => ({
+                    ...values,
+                    dueDate: event.target.value,
+                    reminderMinutes: event.target.value ? values.reminderMinutes : null,
+                  }))}
+                />
               </label>
+              <ReminderSelect
+                id="edit-reminder"
+                dueDate={editValues.dueDate}
+                value={editValues.reminderMinutes}
+                onChange={(value) => setEditValues((values) => ({ ...values, reminderMinutes: value }))}
+              />
               <div className="todo-dialog-actions">
                 <button className="secondary-action" type="button" onClick={() => setEditingTodo(null)}>Cancel</button>
                 <button
@@ -516,5 +706,70 @@ export default function HomePage() {
         </div>
       )}
     </main>
+  );
+}
+
+const reminderOptions: Array<{ value: ReminderMinutes; label: string; option: string }> = [
+  { value: 15, label: REMINDER_LABELS[15], option: '15 minutes before' },
+  { value: 30, label: REMINDER_LABELS[30], option: '30 minutes before' },
+  { value: 60, label: REMINDER_LABELS[60], option: '1 hour before' },
+  { value: 120, label: REMINDER_LABELS[120], option: '2 hours before' },
+  { value: 1440, label: REMINDER_LABELS[1440], option: '1 day before' },
+  { value: 2880, label: REMINDER_LABELS[2880], option: '2 days before' },
+  { value: 10080, label: REMINDER_LABELS[10080], option: '1 week before' },
+];
+
+function ReminderSelect({
+  id,
+  dueDate,
+  value,
+  onChange,
+}: {
+  id: string;
+  dueDate: string;
+  value: ReminderMinutes | null;
+  onChange: (value: ReminderMinutes | null) => void;
+}) {
+  return (
+    <label>
+      <span className="field-label">Reminder</span>
+      <select
+        className="text-input"
+        id={id}
+        value={value ?? ''}
+        disabled={!dueDate}
+        onChange={(event) => onChange(event.target.value ? Number(event.target.value) as ReminderMinutes : null)}
+      >
+        <option value="">None</option>
+        {reminderOptions.map(({ value: minutes, option }) => (
+          <option key={minutes} value={minutes}>{option}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function NotificationToggle() {
+  const { permission, requestPermission } = useNotifications();
+  const enabled = permission === 'granted';
+  const unavailable = permission === 'unsupported' || permission === 'denied';
+  const label = enabled
+    ? 'Notifications On'
+    : permission === 'denied'
+      ? 'Notifications Blocked'
+      : permission === 'unsupported'
+        ? 'Notifications Unavailable'
+        : 'Enable Notifications';
+
+  return (
+    <button
+      className={`secondary-action notification-action${enabled ? ' is-enabled' : ''}`}
+      type="button"
+      onClick={() => void requestPermission()}
+      disabled={enabled || unavailable}
+      title={label}
+    >
+      <Bell size={17} aria-hidden="true" /> {label}
+    </button>
   );
 }

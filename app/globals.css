@@ -250,6 +250,12 @@ select:focus-visible {
   gap: 10px;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .home-content {
   width: min(100%, 920px);
   margin: 72px auto 0;
@@ -283,7 +289,7 @@ select:focus-visible {
 
 .todo-create-form {
   display: grid;
-  grid-template-columns: minmax(200px, 1fr) minmax(125px, 160px) minmax(210px, 240px) auto;
+  grid-template-columns: minmax(200px, 1fr) minmax(125px, 160px) minmax(210px, 240px) minmax(150px, 180px) auto;
   align-items: end;
   gap: 14px;
   margin-top: 34px;
@@ -460,6 +466,20 @@ select:focus-visible {
   color: #1e40af;
 }
 
+.reminder-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #9a4f24;
+  font-weight: 650;
+}
+
+.notification-action.is-enabled {
+  border-color: #b7d2bd;
+  background: #e8f2e7;
+  color: #24553b;
+}
+
 .todo-due {
   display: inline-flex;
   align-items: center;
@@ -485,6 +505,35 @@ select:focus-visible {
 
 .icon-action:hover { background: #e7eee6; color: var(--forest-deep); }
 .icon-action.delete-action:hover { background: #f7e9e5; color: #a93630; }
+
+.subtasks {
+  grid-column: 2 / -1;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.subtask-toggle, .subtask-add {
+  border: 0;
+  background: transparent;
+  color: var(--forest);
+  cursor: pointer;
+}
+
+.subtask-toggle { padding: 4px 0; }
+.subtask-progress { margin: 6px 0 10px; }
+.subtask-progress-label { display: flex; justify-content: space-between; color: var(--muted); }
+.subtask-progress-track { height: 7px; margin-top: 5px; overflow: hidden; border-radius: 4px; background: var(--line); }
+.subtask-progress-fill { height: 100%; background: #2563eb; transition: width 200ms; }
+.subtask-progress-fill.is-complete { background: #16a34a; }
+.subtask-list { padding: 0; margin: 6px 0; list-style: none; }
+.subtask-row, .subtask-row label, .subtask-form { display: flex; align-items: center; gap: 8px; }
+.subtask-row label { flex: 1; min-width: 0; }
+.subtask-row label span { overflow-wrap: anywhere; }
+.subtask-row input { flex-shrink: 0; accent-color: var(--forest); }
+.subtask-row .is-complete { color: var(--muted); text-decoration: line-through; }
+.subtask-form .text-input { min-width: 0; height: 36px; flex: 1; }
+.subtask-add { padding: 8px; }
+.subtasks button:disabled, .subtasks input:disabled { cursor: not-allowed; opacity: 0.6; }
 
 .todo-dialog-backdrop {
   position: fixed;
@@ -539,6 +588,19 @@ select:focus-visible {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@media (max-width: 900px) {
+  .todo-create-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .todo-title-field,
+  .add-todo-action {
+    grid-column: 1 / -1;
+  }
+
+  .add-todo-action { width: 100%; }
+}
+
 @media (max-width: 760px) {
   .auth-layout {
     grid-template-columns: 1fr;
@@ -578,19 +640,12 @@ select:focus-visible {
     padding: 22px 0;
   }
 
-  .todo-workspace { margin-top: 38px; }
-
-  .todo-create-form {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 12px;
-  }
-
-  .todo-title-field { grid-column: 1 / -1; }
-
-  .add-todo-action {
+  .header-actions {
     width: 100%;
-    grid-column: 1 / -1;
+    justify-content: space-between;
   }
+
+  .todo-workspace { margin-top: 38px; }
 
   .todo-row {
     grid-template-columns: 26px minmax(0, 1fr) auto;
