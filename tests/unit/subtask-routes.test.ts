@@ -85,6 +85,14 @@ describe('subtask API routes', () => {
     expect((await collection.POST(malformed, context(todoId))).status).toBe(400);
   });
 
+  it('rejects subtask titles longer than 500 characters', async () => {
+    expect((await collection.POST(
+      request('POST', { title: 'x'.repeat(501) }),
+      context(todoId),
+    )).status).toBe(400);
+    expect(dbModule.subtaskDB.findByTodoId(todoId)).toEqual([]);
+  });
+
   it('returns 404 for another owner on create, update and delete', async () => {
     const child = dbModule.subtaskDB.create(todoId, { title: 'Private' });
     getSessionMock.mockResolvedValue({ userId: bobId, username: 'bob' });

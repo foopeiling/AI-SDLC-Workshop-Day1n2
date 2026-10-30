@@ -633,10 +633,10 @@ npx tsx scripts/seed-holidays.ts
 npx playwright install
 
 # Run with headed mode to see what's happening
-npx playwright test --headed
+npm run test:e2e -- --headed
 
 # Run specific test
-npx playwright test tests/01-authentication.spec.ts
+npm run test:e2e -- tests/e2e/01-authentication.spec.ts
 ```
 
 ---
@@ -663,7 +663,7 @@ I'm getting undefined for authenticator.counter. Check the copilot instructions 
 ### 4. Run Tests
 ```bash
 # Run all tests
-npx playwright test
+npm run test:e2e
 
 # View test report
 npx playwright show-report
@@ -700,9 +700,9 @@ npm start            # Start production server
 npm run lint         # Run ESLint
 
 # Testing
-npx playwright test                    # Run all tests
-npx playwright test --ui              # Interactive mode
-npx playwright test --headed          # See browser
+npm run test:e2e                      # Run all tests in an isolated environment
+npm run test:e2e -- --ui              # Interactive mode
+npm run test:e2e -- --headed          # See browser
 npx playwright show-report            # View results
 
 # Database

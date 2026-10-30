@@ -125,6 +125,26 @@ export interface Template {
   created_at: string;
 }
 
+export interface TemplateSubtask {
+  title: string;
+  position: number;
+}
+
+export interface CreateTemplateDto {
+  name: string;
+  description?: string | null;
+  category?: string | null;
+  title_template: string;
+  priority?: Priority;
+  is_recurring?: boolean;
+  recurrence_pattern?: RecurrencePattern | null;
+  reminder_minutes?: ReminderMinutes | null;
+  due_date_offset_minutes?: number | null;
+  subtasks?: TemplateSubtask[];
+}
+
+export type UpdateTemplateDto = Partial<CreateTemplateDto>;
+
 export interface Holiday {
   id: number;
   date: string;
@@ -209,6 +229,7 @@ const schema = `
     subtasks_json TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+  CREATE INDEX IF NOT EXISTS idx_templates_user_id ON templates(user_id);
 
   CREATE TABLE IF NOT EXISTS holidays (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -507,6 +528,42 @@ export function createTodoRepository(database: AppDatabase) {
           );
         const todoId = Number(result.lastInsertRowid);
         attachTags(todoId, input.user_id, input.tag_ids ?? []);
+        return todoId;
+      });
+
+      return findTodoById(createTodo.immediate()) as Todo;
+    },
+    createWithSubtasks(
+      input: CreateTodoInput & { user_id: number },
+      subtasks: TemplateSubtask[],
+    ): Todo {
+      const title = input.title.trim();
+      if (!title) throw new Error('Todo title is required');
+
+      const createTodo = database.transaction(() => {
+        const result = database
+          .prepare(
+            `INSERT INTO todos
+              (user_id, title, due_date, priority, is_recurring, recurrence_pattern, reminder_minutes)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            input.user_id,
+            title,
+            input.due_date ?? null,
+            input.priority ?? 'medium',
+            input.is_recurring ? 1 : 0,
+            input.recurrence_pattern ?? null,
+            input.reminder_minutes ?? null,
+          );
+        const todoId = Number(result.lastInsertRowid);
+        attachTags(todoId, input.user_id, input.tag_ids ?? []);
+        const insertSubtask = database.prepare(
+          'INSERT INTO subtasks (todo_id, title, completed, position) VALUES (?, ?, 0, ?)',
+        );
+        for (const subtask of subtasks) {
+          insertSubtask.run(todoId, subtask.title.trim(), subtask.position);
+        }
         return todoId;
       });
 
@@ -866,11 +923,148 @@ export function createSubtaskRepository(database: AppDatabase) {
   };
 }
 
+export function createTemplateRepository(database: AppDatabase) {
+  type StoredTemplate = Omit<Template, 'is_recurring'> & { is_recurring: number | boolean };
+
+  function normalizeTemplate(template: StoredTemplate): Template {
+    return { ...template, is_recurring: Boolean(template.is_recurring) };
+  }
+
+  function serializeSubtasks(subtasks: TemplateSubtask[] | undefined): string | null {
+    if (!subtasks?.length) return null;
+    return JSON.stringify(subtasks.map((subtask, index) => ({
+      title: subtask.title.trim(),
+      position: index,
+    })));
+  }
+
+  function findByIdForUser(templateId: number, userId: number): Template | null {
+    const row = database.prepare('SELECT * FROM templates WHERE id = ? AND user_id = ?')
+      .get(templateId, userId);
+    return row ? normalizeTemplate(row as StoredTemplate) : null;
+  }
+
+  return {
+    createForUser(userId: number, input: CreateTemplateDto): Template {
+      const name = input.name.trim();
+      const titleTemplate = input.title_template.trim();
+      if (!name || !titleTemplate) throw new Error('Template name and title are required');
+
+      const result = database.prepare(
+        `INSERT INTO templates
+          (user_id, name, description, category, title_template, priority, is_recurring,
+           recurrence_pattern, reminder_minutes, due_date_offset_minutes, subtasks_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        userId,
+        name,
+        input.description?.trim() || null,
+        input.category?.trim() || null,
+        titleTemplate,
+        input.priority ?? 'medium',
+        input.is_recurring ? 1 : 0,
+        input.is_recurring ? input.recurrence_pattern ?? null : null,
+        input.reminder_minutes ?? null,
+        input.due_date_offset_minutes ?? null,
+        serializeSubtasks(input.subtasks),
+      );
+      return findByIdForUser(Number(result.lastInsertRowid), userId) as Template;
+    },
+    deleteForUser(templateId: number, userId: number): boolean {
+      return database.prepare('DELETE FROM templates WHERE id = ? AND user_id = ?')
+        .run(templateId, userId).changes === 1;
+    },
+    findAllByUser(userId: number): Template[] {
+      return (database.prepare(
+        'SELECT * FROM templates WHERE user_id = ? ORDER BY created_at DESC, id DESC',
+      ).all(userId) as StoredTemplate[]).map(normalizeTemplate);
+    },
+    findByIdForUser(templateId: number, userId: number): Template | null {
+      return findByIdForUser(templateId, userId);
+    },
+    updateForUser(templateId: number, userId: number, input: UpdateTemplateDto): Template | null {
+      const updates: Array<[string, unknown]> = [];
+      const stringFields: Array<[keyof UpdateTemplateDto, string]> = [
+        ['name', 'name'],
+        ['description', 'description'],
+        ['category', 'category'],
+        ['title_template', 'title_template'],
+      ];
+      for (const [field, column] of stringFields) {
+        if (!(field in input)) continue;
+        const rawValue = input[field];
+        const value = typeof rawValue === 'string' ? rawValue.trim() : null;
+        if ((field === 'name' || field === 'title_template') && !value) {
+          throw new Error('Template name and title are required');
+        }
+        updates.push([column, value || null]);
+      }
+
+      const valueFields: Array<[keyof UpdateTemplateDto, string]> = [
+        ['priority', 'priority'],
+        ['recurrence_pattern', 'recurrence_pattern'],
+        ['reminder_minutes', 'reminder_minutes'],
+        ['due_date_offset_minutes', 'due_date_offset_minutes'],
+      ];
+      for (const [field, column] of valueFields) {
+        if (field === 'recurrence_pattern' && input.is_recurring === false) continue;
+        if (field in input) updates.push([column, input[field] ?? null]);
+      }
+      if ('is_recurring' in input) updates.push(['is_recurring', input.is_recurring ? 1 : 0]);
+      if ('subtasks' in input) updates.push(['subtasks_json', serializeSubtasks(input.subtasks)]);
+      if (input.is_recurring === false) {
+        updates.push(['recurrence_pattern', null]);
+      }
+
+      const updateTemplate = database.transaction(() => {
+        const current = findByIdForUser(templateId, userId);
+        if (!current) return null;
+
+        const isRecurring = input.is_recurring ?? current.is_recurring;
+        const recurrencePattern = isRecurring
+          ? 'recurrence_pattern' in input
+            ? input.recurrence_pattern ?? null
+            : current.recurrence_pattern
+          : null;
+        const reminderMinutes = 'reminder_minutes' in input
+          ? input.reminder_minutes ?? null
+          : current.reminder_minutes;
+        const dueDateOffsetMinutes = 'due_date_offset_minutes' in input
+          ? input.due_date_offset_minutes ?? null
+          : current.due_date_offset_minutes;
+        if (isRecurring && (!recurrencePattern || dueDateOffsetMinutes === null)) {
+          throw new Error('Recurring templates require a pattern and due date offset.');
+        }
+        if (reminderMinutes !== null && dueDateOffsetMinutes === null) {
+          throw new Error('Templates with reminders require a due date offset.');
+        }
+
+        const effectiveUpdates = isRecurring
+          ? updates
+          : [
+              ...updates.filter(([column]) => column !== 'recurrence_pattern'),
+              ['recurrence_pattern', null] as [string, unknown],
+            ];
+        if (effectiveUpdates.length > 0) {
+          const assignments = effectiveUpdates.map(([column]) => `${column} = ?`);
+          const result = database.prepare(
+            `UPDATE templates SET ${assignments.join(', ')} WHERE id = ? AND user_id = ?`,
+          ).run(...effectiveUpdates.map(([, value]) => value), templateId, userId);
+          if (result.changes === 0) return null;
+        }
+        return findByIdForUser(templateId, userId);
+      });
+      return updateTemplate.immediate();
+    },
+  };
+}
+
 export const db = createAppDatabase();
 export const { userDB, authenticatorDB, challengeDB, rateLimitDB } = createAuthRepositories(db);
 export const todoDB = createTodoRepository(db);
 export const tagDB = createTagRepository(db);
 export const subtaskDB = createSubtaskRepository(db);
+export const templateDB = createTemplateRepository(db);
 
 export function createHolidayRepository(database: AppDatabase) {
   return {
